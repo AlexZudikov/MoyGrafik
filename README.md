@@ -1,6 +1,5 @@
 <div align="center">
-
-<img src="app/src/main/res/drawable/splash_logo.png" width="120" height="120" alt="Мой График" style="border-radius:26px"/>
+<img width="1024" height="500" alt="ic_launcher_foreground" src="https://github.com/user-attachments/assets/943a3990-9a33-4db2-95d6-b140bc39ab51" />
 
 # 📅 Мой График
 
@@ -77,9 +76,6 @@
 | <img src="screenshots/calendar.png" width="200"/> | <img src="screenshots/shifts.png" width="200"/> | <img src="screenshots/stats.png" width="200"/> | <img src="screenshots/settings.png" width="200"/> |
 
 </div>
-
-> 💡 Добавь скриншоты в папку `screenshots/` — таблица заполнится автоматически
-
 ---
 
 ## 🛠 Стек технологий
@@ -250,14 +246,9 @@ MIT License — Copyright (c) 2026 Alexandr Zudikov
 ```
 
 ---
-
-## 📬 Контакты
-
 <div align="center">
 
 Разработчик: **Alexander Zudikov (Александр Зудиков)**
-
-[![Telegram](https://img.shields.io/badge/Telegram-@Zzzaaao-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/Zzzaaao)
 
 ---
 
