@@ -1,0 +1,41 @@
+# Android / Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+!**/src/androidTest/**/build/
+
+# Android Studio
+*.iml
+.idea/
+.idea/caches
+.idea/libraries
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+.DS_Store
+captures/
+
+# Подписи (НИКОГДА не публикуй!)
+*.jks
+*.keystore
+keystore.properties
+release/
+
+# Локальные настройки
+local.properties
+
+# APK файлы
+*.apk
+*.aab
+
+# Отладочная информация
+*.hprof
+lint/
+proguard/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Мой График</string>
+    <string name="widget_name">Мой График — Смены</string>
+    <string name="widget_description">Ближайшие смены на рабочем столе</string>
+	<string name="widget_small_desc">Мой График — маленький (2×1): ближайшая смена</string>
+    <string name="widget_medium_desc">Мой График — средний (2×2): 3 ближайшие смены</string>
+    <string name="widget_large_desc">Мой График — большой (4×2): расписание на неделю</string>
+</resources>

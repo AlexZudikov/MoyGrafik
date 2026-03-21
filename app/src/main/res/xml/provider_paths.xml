@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Внутренний кэш (fallback) -->
+    <cache-path name="pdf" path="pdf_export/" />
+    <!-- Внешнее хранилище приложения (Documents/МойГрафик) — основной путь -->
+    <external-files-path name="pdf_external" path="Documents/МойГрафик/" />
+</paths>
