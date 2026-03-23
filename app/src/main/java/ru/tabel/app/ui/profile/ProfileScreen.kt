@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import ru.tabel.app.ui.theme.rememberAdaptiveDimens
 
 // ── Хранение состояния блокировки ─────────────────────────────
 private fun saveLock(ctx: Context, profileId: String, locked: Boolean) {
@@ -37,6 +38,7 @@ fun ProfileScreen(viewModel: ProfileViewModel = hiltViewModel()) {
     val context  = LocalContext.current
     val profiles by viewModel.profiles.collectAsState()
     val active   by viewModel.activeProfile.collectAsState()
+    val dimens  = rememberAdaptiveDimens()
 
     // Состояние блокировок — загружается из SharedPreferences
     var lockedIds by remember { mutableStateOf(emptySet<String>()) }
@@ -51,7 +53,7 @@ fun ProfileScreen(viewModel: ProfileViewModel = hiltViewModel()) {
     var renameTarget by remember { mutableStateOf<ru.tabel.app.data.model.Profile?>(null) }
     var renameName   by remember { mutableStateOf("") }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(dimens.horizontalPadding)) {
         // Заголовок
         Row(
             Modifier.fillMaxWidth(),
@@ -59,27 +61,27 @@ fun ProfileScreen(viewModel: ProfileViewModel = hiltViewModel()) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Профили",
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.headlineMedium.copy(fontSize = dimens.titleFontSize),
                 fontWeight = FontWeight.Black)
             IconButton(onClick = { showAdd = true }) {
-                Icon(Icons.Rounded.Add, "Добавить")
+                Icon(Icons.Rounded.Add, "Добавить", modifier = Modifier.size(dimens.iconSizeMedium))
             }
         }
 
         // Подсказка
         Row(
-            Modifier.fillMaxWidth().padding(bottom = 12.dp)
+            Modifier.fillMaxWidth().padding(bottom = dimens.cardPadding)
                 .clip(MaterialTheme.shapes.large)
                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = dimens.cardPadding, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Icon(Icons.Rounded.Info, null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(14.dp))
+                modifier = Modifier.size(dimens.iconSizeSmall - 4.dp))
             Text("✏️ переименовать  ·  🔒 защита от удаления",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = dimens.labelFontSize),
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
@@ -87,6 +89,7 @@ fun ProfileScreen(viewModel: ProfileViewModel = hiltViewModel()) {
             items(profiles) { profile ->
                 val locked = profile.id in lockedIds
                 ProfileCard(
+                    dimens   = dimens,
                     profile   = profile,
                     isActive  = profile.id == active?.id,
                     isLocked  = locked,
@@ -292,6 +295,7 @@ fun ProfileScreen(viewModel: ProfileViewModel = hiltViewModel()) {
 // ── Карточка профиля ─────────────────────────────────────────
 @Composable
 private fun ProfileCard(
+    dimens:      ru.tabel.app.ui.theme.AdaptiveDimens,
     profile:      ru.tabel.app.data.model.Profile,
     isActive:     Boolean,
     isLocked:     Boolean,
@@ -325,13 +329,13 @@ private fun ProfileCard(
         )
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(12.dp),
+            Modifier.fillMaxWidth().padding(dimens.cardPadding),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(if (dimens.isCompact) 6.dp else 8.dp)
         ) {
             // Аватар
             Box(
-                Modifier.size(42.dp).clip(CircleShape).background(
+                Modifier.size(if (dimens.isCompact) 36.dp else 42.dp).clip(CircleShape).background(
                     if (isActive) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
                 ),
@@ -340,44 +344,44 @@ private fun ProfileCard(
                 Text(profile.name.take(1).uppercase(),
                     color = if (isActive) Color.White
                             else MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                    fontWeight = FontWeight.ExtraBold, fontSize = if (dimens.isCompact) 14.sp else 16.sp)
             }
 
             // Имя + статус
             Column(Modifier.weight(1f)) {
                 Text(profile.name,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = dimens.titleFontSize),
                     fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal)
                 if (isActive) {
                     Text("Активный",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = dimens.labelFontSize),
                         color = MaterialTheme.colorScheme.primary)
                 }
                 AnimatedVisibility(isLocked,
                     enter = fadeIn() + expandVertically(),
                     exit  = fadeOut() + shrinkVertically()
                 ) {
-                    Text("🔒 Защищён от удаления",
-                        style = MaterialTheme.typography.labelSmall,
+                    Text("🔒 Защищён",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = (dimens.labelFontSize.value - 1).sp),
                         color = MaterialTheme.colorScheme.primary)
                 }
             }
 
             // ✏️ Переименовать
-            IconButton(onClick = onRename, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onRename, modifier = Modifier.size(if (dimens.isCompact) 32.dp else 36.dp)) {
                 Icon(Icons.Rounded.Edit, "Переименовать",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.size(18.dp))
+                    modifier = Modifier.size(dimens.iconSizeSmall - 2.dp))
             }
 
             // 🔒 Замок
-            IconButton(onClick = onToggleLock, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = onToggleLock, modifier = Modifier.size(if (dimens.isCompact) 32.dp else 36.dp)) {
                 Icon(
                     if (isLocked) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
                     if (isLocked) "Разблокировать" else "Заблокировать",
                     tint = if (isLocked) MaterialTheme.colorScheme.primary
                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                    modifier = Modifier.size(20.dp).scale(lockScale)
+                    modifier = Modifier.size(dimens.iconSizeSmall).scale(lockScale)
                 )
             }
 
@@ -387,10 +391,10 @@ private fun ProfileCard(
                 enter = fadeIn() + scaleIn(spring(Spring.DampingRatioMediumBouncy)),
                 exit  = fadeOut() + scaleOut()
             ) {
-                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+                IconButton(onClick = onDelete, modifier = Modifier.size(if (dimens.isCompact) 32.dp else 36.dp)) {
                     Icon(Icons.Rounded.Delete, "Удалить",
                         tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(18.dp))
+                        modifier = Modifier.size(dimens.iconSizeSmall - 2.dp))
                 }
             }
         }

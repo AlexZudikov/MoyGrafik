@@ -18,29 +18,29 @@ import androidx.compose.ui.unit.sp
 import ru.tabel.app.data.model.ShiftType
 import java.time.LocalDate
 
-data class ShiftTemplate(
+data class AutofillTemplate(
     val id: String,
     val name: String,
     val desc: String,
     val pattern: List<ShiftType>
 )
 
-val SHIFT_TEMPLATES = listOf(
-    ShiftTemplate("dn_so",  "День/Ночь/Отс/Вых", "Классический 4-дневный цикл",
+val SHIFT_AUTOFILL_TEMPLATES = listOf(
+    AutofillTemplate("dn_so",  "День/Ночь/Отс/Вых", "Классический 4-дневный цикл",
         listOf(ShiftType.DAY, ShiftType.NIGHT, ShiftType.SLEEP, ShiftType.OFF)),
-    ShiftTemplate("1_1",    "1/1 день/выходной",  "1 рабочий + 1 выходной",
+    AutofillTemplate("1_1",    "1/1 день/выходной",  "1 рабочий + 1 выходной",
         listOf(ShiftType.DAY, ShiftType.OFF)),
-    ShiftTemplate("2_2",    "2/2",                "2 рабочих, 2 выходных",
+    AutofillTemplate("2_2",    "2/2",                "2 рабочих, 2 выходных",
         listOf(ShiftType.DAY, ShiftType.DAY, ShiftType.OFF, ShiftType.OFF)),
-    ShiftTemplate("3_3",    "3/3",                "3 рабочих, 3 выходных",
+    AutofillTemplate("3_3",    "3/3",                "3 рабочих, 3 выходных",
         listOf(ShiftType.DAY, ShiftType.DAY, ShiftType.DAY, ShiftType.OFF, ShiftType.OFF, ShiftType.OFF)),
-    ShiftTemplate("suit3",  "Сутки/трое",         "Суточная, 3 выходных",
+    AutofillTemplate("suit3",  "Сутки/трое",         "Суточная, 3 выходных",
         listOf(ShiftType.DAY, ShiftType.OFF, ShiftType.OFF, ShiftType.OFF)),
-    ShiftTemplate("5_2",    "5/2",                "Пн–Пт, Сб–Вс выходных",
+    AutofillTemplate("5_2",    "5/2",                "Пн–Пт, Сб–Вс выходных",
         listOf(ShiftType.DAY, ShiftType.DAY, ShiftType.DAY, ShiftType.DAY, ShiftType.DAY, ShiftType.OFF, ShiftType.OFF)),
-    ShiftTemplate("6_1",    "6/1 (вахта)",        "6 рабочих, 1 выходной",
+    AutofillTemplate("6_1",    "6/1 (вахта)",        "6 рабочих, 1 выходной",
         listOf(ShiftType.DAY, ShiftType.DAY, ShiftType.DAY, ShiftType.DAY, ShiftType.DAY, ShiftType.DAY, ShiftType.OFF)),
-    ShiftTemplate("6_1n",   "6/1 ночной (вахта)", "6 ночных, 1 выходной",
+    AutofillTemplate("6_1n",   "6/1 ночной (вахта)", "6 ночных, 1 выходной",
         listOf(ShiftType.NIGHT, ShiftType.NIGHT, ShiftType.NIGHT, ShiftType.NIGHT, ShiftType.NIGHT, ShiftType.NIGHT, ShiftType.OFF)),
 )
 
@@ -56,7 +56,7 @@ fun AutofillBottomSheet(
     onConfirmYear: (pattern: List<ShiftType>, startDate: LocalDate, startIndex: Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var selectedTemplateId  by remember { mutableStateOf(SHIFT_TEMPLATES[0].id) }
+    var selectedTemplateId  by remember { mutableStateOf(SHIFT_AUTOFILL_TEMPLATES[0].id) }
     var startTypeIndex      by remember { mutableStateOf(0) }
     var showYearConfirm     by remember { mutableStateOf(false) }
     var pendingYearPattern  by remember { mutableStateOf<List<ru.tabel.app.data.model.ShiftType>>(emptyList()) }
@@ -67,7 +67,7 @@ fun AutofillBottomSheet(
     var selectedDay by remember { mutableStateOf(1) }
     val daysInMonth = currentMonth.lengthOfMonth()
 
-    val selectedTemplate = SHIFT_TEMPLATES.find { it.id == selectedTemplateId } ?: SHIFT_TEMPLATES[0]
+    val selectedTemplate = SHIFT_AUTOFILL_TEMPLATES.find { it.id == selectedTemplateId } ?: SHIFT_AUTOFILL_TEMPLATES[0]
     LaunchedEffect(selectedTemplateId) { startTypeIndex = 0 }
 
     ModalBottomSheet(
@@ -101,7 +101,7 @@ fun AutofillBottomSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 10.dp))
 
-            SHIFT_TEMPLATES.chunked(2).forEach { row ->
+            SHIFT_AUTOFILL_TEMPLATES.chunked(2).forEach { row ->
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -294,7 +294,7 @@ fun AutofillBottomSheet(
             ) {
                 Icon(Icons.Rounded.CalendarMonth, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Заполнить на год вперёд", fontWeight = FontWeight.Bold)
+                Text("До конца года", fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(8.dp))
             OutlinedButton(onClick = onDismiss,
@@ -315,11 +315,8 @@ fun AutofillBottomSheet(
                     fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold)
             },
             text  = {
-                val names = listOf("Январь","Февраль","Март","Апрель","Май","Июнь",
-                    "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь")
-                val endDate = pendingYearStart?.plusYears(1)
-                val endName = endDate?.let { names[it.monthValue-1] + " " + it.year } ?: ""
-                Text("Это перезапишет расписание с выбранной даты по $endName включительно.\n\nВсе ручные правки в этом периоде будут удалены.",
+                val startYear = pendingYearStart?.year ?: LocalDate.now().year
+                Text("Это перезапишет расписание с выбранной даты до 31 декабря $startYear года.\n\nВсе ручные правки в этом периоде будут удалены.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             },
             confirmButton = {

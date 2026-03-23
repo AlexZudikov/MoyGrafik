@@ -31,19 +31,18 @@ class WidgetUpdater @Inject constructor(
             .sortedBy { it.date }
             .take(ShiftWidget.MAX_SHIFTS)
 
-        // Ключи префов должны совпадать с ShiftWidget.kDate/kType/kTime
         val prefs = context.getSharedPreferences(ShiftWidget.PREFS, Context.MODE_PRIVATE)
         prefs.edit().apply {
             putString(ShiftWidget.KEY_PROFILE, profileName)
             upcoming.forEachIndexed { i, e ->
                 putString(ShiftWidget.kDate(i), e.date)
                 putString(ShiftWidget.kType(i), e.type.name)
-                // Время показываем ТОЛЬКО для рабочих смен (Дневная, Ночная, Праздник)
-                // Отсыпной, Выходной, Больничный, Отпуск — без времени
+                
                 val showTime = when (e.type) {
                     ShiftType.DAY, ShiftType.NIGHT, ShiftType.HOLIDAY -> true
                     else -> false
                 }
+                
                 val startTime = if (showTime) {
                     e.customStartTime
                         ?: timesMap[e.type]?.startTime
@@ -54,19 +53,32 @@ class WidgetUpdater @Inject constructor(
                         }
                 } else null
 
+                val endTime = if (showTime) {
+                    e.customEndTime
+                        ?: timesMap[e.type]?.endTime
+                        ?: when (e.type) {
+                            ShiftType.DAY, ShiftType.HOLIDAY -> "20:00"
+                            ShiftType.NIGHT -> "08:00"
+                            else -> null
+                        }
+                } else null
+
                 if (startTime != null) putString(ShiftWidget.kTime(i), startTime)
                 else                   remove(ShiftWidget.kTime(i))
+
+                if (endTime != null) putString(ShiftWidget.kEnd(i), endTime)
+                else                 remove(ShiftWidget.kEnd(i))
             }
-            // Очищаем неиспользуемые слоты
+            
             for (i in upcoming.size until ShiftWidget.MAX_SHIFTS) {
                 remove(ShiftWidget.kDate(i))
                 remove(ShiftWidget.kType(i))
                 remove(ShiftWidget.kTime(i))
+                remove(ShiftWidget.kEnd(i))
             }
             apply()
         }
 
-        // Принудительно перерисовываем все экземпляры виджета
         CoroutineScope(Dispatchers.Main).launch {
             runCatching { ShiftWidget().updateAll(context) }
         }

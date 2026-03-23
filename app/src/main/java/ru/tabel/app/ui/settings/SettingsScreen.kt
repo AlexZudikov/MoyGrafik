@@ -18,6 +18,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -26,19 +27,26 @@ import androidx.compose.ui.platform.LocalContext
 import android.os.Build
 import ru.tabel.app.data.model.ThemeMode
 import androidx.compose.ui.platform.LocalHapticFeedback
+import ru.tabel.app.ui.calendar.AutofillBottomSheet
+import ru.tabel.app.ui.templates.TemplatePickerSheet
+import java.time.LocalDate
 import androidx.compose.ui.text.font.FontWeight
+import ru.tabel.app.ui.theme.rememberAdaptiveDimens
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import ru.tabel.app.SettingsViewModel
 import ru.tabel.app.data.model.*
 import ru.tabel.app.ui.profile.ProfileViewModel
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 // ─────────────────────────────────────────────────────────────
 @Composable
@@ -54,6 +62,7 @@ fun SettingsScreen(
     val shiftTimes    by vm.shiftTimes.collectAsState()
     val profiles      by profileVm.profiles.collectAsState()
     val activeProfile by profileVm.activeProfile.collectAsState()
+    val dimens       = rememberAdaptiveDimens()
 
     // ── Локальное состояние полей ──────────────────────────────
     var wageText   by remember(settings.hourlyRate)      { mutableStateOf(if (settings.hourlyRate > 0) settings.hourlyRate.toInt().toString() else "") }
@@ -65,6 +74,12 @@ fun SettingsScreen(
     // ── Диалоги ───────────────────────────────────────────────
     var timePickerFor     by remember { mutableStateOf<Triple<ShiftType, Boolean, String>?>(null) }
     // Triple(type, isStart, currentValue)
+    var showAutofill by remember { mutableStateOf(false) }
+    var showTemplate by remember { mutableStateOf(false) }
+    var showClearConfirm by remember { mutableStateOf(false) }
+    var clearMonthYear by remember { mutableStateOf(LocalDate.now().year) }
+    var clearMonthMonth by remember { mutableStateOf(LocalDate.now().monthValue) }
+    var isClearingYear by remember { mutableStateOf(false) }
 
     // ── Лаунчер для выбора файла восстановления ───────────────
     val restoreLauncher = rememberLauncherForActivityResult(
@@ -82,14 +97,14 @@ fun SettingsScreen(
         // Хедер
         Row(
             Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = dimens.horizontalPadding, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text("Настройки", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-            Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+            Text("Настройки", style = MaterialTheme.typography.titleLarge.copy(fontSize = dimens.titleFontSize), fontWeight = FontWeight.ExtraBold)
+            Box(Modifier.size(dimens.buttonHeight - 8.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center) {
-                Icon(Icons.Rounded.Settings, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.Rounded.Settings, null, Modifier.size(dimens.iconSizeSmall), tint = MaterialTheme.colorScheme.primary)
             }
         }
 
@@ -296,6 +311,51 @@ fun SettingsScreen(
                 }
             }
 
+            // ── ОБОЗНАЧЕНИЯ СМЕН ──────────────────────────────────
+            SettingsCard {
+                SectionHeader("ОБОЗНАЧЕНИЯ СМЕН", Icons.Rounded.Info, Color(0xFF8B5CF6))
+                
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ShiftType.entries.forEach { type ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(type.color).copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(type.icon, fontSize = 14.sp)
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    type.label,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                if (!type.hasTime) {
+                                    Text(
+                                        "Без времени",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(type.color))
+                            )
+                        }
+                    }
+                }
+            }
+
             // ── ВРЕМЯ СМЕН (кликабельные строки → TimePicker) ─
             SettingsCard {
                 SectionHeader("ВРЕМЯ СМЕН", Icons.Rounded.Schedule, Color(0xFF06b6d4))
@@ -304,13 +364,19 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 10.dp))
 
-                listOf(ShiftType.DAY, ShiftType.NIGHT, ShiftType.HOLIDAY, ShiftType.SLEEP).forEach { type ->
+                val isLockedData = settings.isLocked
+                val timeTypes = listOf(ShiftType.DAY, ShiftType.NIGHT, ShiftType.HOLIDAY, ShiftType.SLEEP, ShiftType.SICK)
+                
+                timeTypes.forEach { type ->
                     val t     = timesMap[type]
                     val start = t?.startTime ?: "08:00"
-                    val end   = t?.endTime   ?: "20:00"
+                    val end   = t?.endTime   ?: if (type == ShiftType.NIGHT) "08:00" else "20:00"
 
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 5.dp)
+                            .then(if (isLockedData) Modifier.alpha(0.5f) else Modifier),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
@@ -320,55 +386,45 @@ fun SettingsScreen(
                         }
                         Text(type.label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
 
-                        // Кнопка начала
-                        TimeChip(start) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            timePickerFor = Triple(type, true, start)
-                        }
-                        Text("–", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
-                        // Кнопка конца
-                        TimeChip(end) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            timePickerFor = Triple(type, false, end)
+                        if (isLockedData) {
+                            Icon(
+                                Icons.Rounded.Lock, "Заблокировано",
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        } else {
+                            // Кнопка начала
+                            TimeChip(start) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                timePickerFor = Triple(type, true, start)
+                            }
+                            Text("–", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                            // Кнопка конца
+                            TimeChip(end) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                timePickerFor = Triple(type, false, end)
+                            }
                         }
                     }
                 }
-            }
 
-            // ── ЗАРПЛАТА И РАБОЧЕЕ ВРЕМЯ ──────────────────────
-            SettingsCard {
-                SectionHeader("ЗАРПЛАТА И РАБОЧЕЕ ВРЕМЯ", Icons.Rounded.CurrencyRuble, Color(0xFF22c55e))
-                WageField("Ставка (₽/час)", wageText)  { wageText  = it }
-                Spacer(Modifier.height(8.dp))
-                WageField("Коэф. ночных",   nightText) { nightText = it }
-                Spacer(Modifier.height(8.dp))
-                WageField("Коэф. праздников", holText) { holText   = it }
-                Spacer(Modifier.height(8.dp))
-                WageField("Коэф. больничных",  sickText) { sickText  = it }
-
-                Spacer(Modifier.height(16.dp))
-
-                // ── Перерыв / обед ────────────────────────────
-                HorizontalDivider(thickness = 0.5.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant)
                 Spacer(Modifier.height(12.dp))
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(Modifier.height(8.dp))
 
                 var breakMin by remember(settings.breakMinutes) {
                     mutableStateOf(settings.breakMinutes)
                 }
                 Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(Icons.Rounded.FreeBreakfast, null,
-                        tint = Color(0xFF22c55e),
-                        modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Перерыв / обед",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f))
-                    // Значение справа
+                    Box(Modifier.size(36.dp).clip(CircleShape).background(Color(0xFF22c55e).copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center) {
+                        Icon(Icons.Rounded.FreeBreakfast, null, tint = Color(0xFF22c55e), modifier = Modifier.size(18.dp))
+                    }
+                    Text("Перерыв / обед", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                     Box(
                         modifier = Modifier
                             .clip(MaterialTheme.shapes.medium)
@@ -380,7 +436,7 @@ fun SettingsScreen(
                             else when {
                                 breakMin < 60  -> "$breakMin мин"
                                 breakMin % 60 == 0 -> "${breakMin / 60} ч"
-                                else -> "${breakMin / 60} ч ${breakMin % 60} мин"
+                                else -> "${breakMin / 60}ч ${breakMin % 60}м"
                             },
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
@@ -388,37 +444,32 @@ fun SettingsScreen(
                         )
                     }
                 }
-                Spacer(Modifier.height(4.dp))
                 Text(
-                    "Вычитается из рабочего времени каждой смены",
+                    "Вычитается из времени каждой смены",
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 46.dp, top = 2.dp)
                 )
-                Spacer(Modifier.height(8.dp))
-                // Слайдер: 0, 15, 30, 45, 60, 75, 90, 120 минут
                 val breakSteps = listOf(0, 15, 30, 45, 60, 75, 90, 120)
-                val breakIdx = (breakSteps.indexOfFirst { it == breakMin }
-                    .takeIf { it >= 0 } ?: 0).toFloat()
+                val breakIdx = (breakSteps.indexOfFirst { it == breakMin }.takeIf { it >= 0 } ?: 0).toFloat()
                 Slider(
                     value = breakIdx,
-                    onValueChange = { breakMin = breakSteps[it.toInt()] },
+                    onValueChange = { if (!isLockedData) breakMin = breakSteps[it.toInt()] },
                     valueRange = 0f..(breakSteps.size - 1).toFloat(),
                     steps = breakSteps.size - 2,
+                    enabled = !isLockedData,
                     colors = SliderDefaults.colors(
-                        thumbColor = Color(0xFF22c55e),
-                        activeTrackColor = Color(0xFF22c55e)
+                        thumbColor = Color(0xFF22c55e), 
+                        activeTrackColor = Color(0xFF22c55e),
+                        disabledThumbColor = Color.Gray,
+                        disabledActiveTrackColor = Color.Gray.copy(alpha = 0.5f)
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("0", style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("30 мин", style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("1 ч", style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("2 ч", style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth().then(if (isLockedData) Modifier.alpha(0.5f) else Modifier), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("0", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("1ч", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("2ч", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -434,7 +485,48 @@ fun SettingsScreen(
                         vm.setBreakMinutes(breakMin)
                         Toast.makeText(context, "Сохранено ✓", Toast.LENGTH_SHORT).show()
                     },
-                    modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large
+                    enabled = !isLockedData,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (isLockedData) Modifier.alpha(0.5f) else Modifier), 
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    Icon(Icons.Rounded.Save, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Сохранить", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // ── ЗАРПЛАТА И РАБОЧЕЕ ВРЕМЯ ──────────────────────
+            SettingsCard {
+                SectionHeader("ЗАРПЛАТА И РАБОЧЕЕ ВРЕМЯ", Icons.Rounded.CurrencyRuble, Color(0xFF22c55e))
+                WageField("Ставка (₽/час)", wageText)  { wageText  = it }
+                Spacer(Modifier.height(8.dp))
+                WageField("Коэф. ночных",   nightText) { nightText = it }
+                Spacer(Modifier.height(8.dp))
+                WageField("Коэф. праздников", holText) { holText   = it }
+                Spacer(Modifier.height(8.dp))
+                WageField("Коэф. больничных",  sickText) { sickText  = it }
+
+                Spacer(Modifier.height(16.dp))
+                
+                val isLockedData = settings.isLocked
+                Button(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        vm.saveWageSettings(
+                            wageText.toFloatOrNull() ?: 0f,
+                            nightText.toFloatOrNull() ?: 1.5f,
+                            holText.toFloatOrNull() ?: 2.0f,
+                            sickText.toFloatOrNull() ?: 0.6f
+                        )
+                        Toast.makeText(context, "Сохранено ✓", Toast.LENGTH_SHORT).show()
+                    },
+                    enabled = !isLockedData,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (isLockedData) Modifier.alpha(0.5f) else Modifier), 
+                    shape = MaterialTheme.shapes.large
                 ) {
                     Icon(Icons.Rounded.Save, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
@@ -502,6 +594,70 @@ fun SettingsScreen(
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     restoreLauncher.launch("application/json")
                 }
+
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                Spacer(Modifier.height(12.dp))
+
+                // Автобекап
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Автобекап",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium)
+                        Text(
+                            if (settings.autoBackupEnabled) "Каждые ${settings.autoBackupFrequency} дней"
+                            else "Отключён",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = settings.autoBackupEnabled,
+                        onCheckedChange = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            vm.setAutoBackup(it)
+                        }
+                    )
+                }
+
+                if (settings.autoBackupEnabled) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(1 to "Каждый день", 7 to "Раз в неделю", 30 to "Раз в месяц").forEach { (days, label) ->
+                            val selected = settings.autoBackupFrequency == days
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(MaterialTheme.shapes.medium)
+                                    .background(
+                                        if (selected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.surfaceVariant
+                                    )
+                                    .clickable {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        vm.setAutoBackup(true, days)
+                                    }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (selected) Color.White
+                                    else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
 
@@ -561,24 +717,42 @@ fun SettingsScreen(
                 }
                 Slider(
                     value = fontScale.toFloat(),
-                    onValueChange = { fontScale = it.toInt() },
-                    onValueChangeFinished = { vm.setFontScale(fontScale / 100f) },
+                    onValueChange = { if (!settings.fontLocked) fontScale = it.toInt() },
+                    onValueChangeFinished = { if (!settings.fontLocked) vm.setFontScale(fontScale / 100f) },
                     valueRange = 80f..130f, steps = 9,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !settings.fontLocked
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(85 to "Мелкий", 100 to "Обычный", 115 to "Крупный").forEach { (v, label) ->
                         val sel = fontScale == v
+                        val isLocked = settings.fontLocked
                         Box(
                             Modifier.weight(1f).clip(MaterialTheme.shapes.medium)
-                                .background(if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                                .clickable { haptic.performHapticFeedback(HapticFeedbackType.LongPress); fontScale = v; vm.setFontScale(v / 100f) }
+                                .background(
+                                    when {
+                                        isLocked -> MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                                        sel -> MaterialTheme.colorScheme.primary
+                                        else -> MaterialTheme.colorScheme.surfaceVariant
+                                    }
+                                )
+                                .then(
+                                    if (!isLocked) Modifier.clickable { haptic.performHapticFeedback(HapticFeedbackType.LongPress); fontScale = v; vm.setFontScale(v / 100f) }
+                                    else Modifier
+                                )
                                 .padding(vertical = 8.dp),
                             Alignment.Center
                         ) {
-                            Text(label, style = MaterialTheme.typography.labelMedium,
+                            Text(
+                                if (isLocked) "🔒" else label,
+                                style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = if (sel) Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
+                                color = when {
+                                    isLocked -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    sel -> Color.White
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
                         }
                     }
                 }
@@ -614,8 +788,210 @@ fun SettingsScreen(
                         )
                     }
                 }
+
+                // ── Блокировка шрифта ─────────────────────────
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Lock, null,
+                                tint = if (settings.fontLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Блокировка шрифта",
+                                style      = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium)
+                        }
+                        Text("Защитить настройки шрифта от случайного изменения",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked         = settings.fontLocked,
+                        onCheckedChange = { vm.setFontLocked(it) }
+                    )
+                }
+
+                // ── Блокировка данных ─────────────────────────
+                Spacer(Modifier.height(4.dp))
+                HorizontalDivider(thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Lock, null,
+                                tint = if (settings.isLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Блокировка данных",
+                                style      = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium)
+                        }
+                        Text("Защитить удаление и редактирование смен",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(
+                        checked         = settings.isLocked,
+                        onCheckedChange = { vm.setIsLocked(it) }
+                    )
+                }
             }
 
+
+            // ── КОНФИГУРАЦИЯ ДАННЫХ ────────────────────────────
+            SettingsCard {
+                SectionHeader("КОНФИГУРАЦИЯ ДАННЫХ", Icons.Rounded.AutoAwesome, Color(0xFF06b6d4))
+                
+                val isLockedData = settings.isLocked
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Автозаполнение
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(MaterialTheme.shapes.large)
+                            .background(
+                                androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                    listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
+                                )
+                            )
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                showAutofill = true
+                            }
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Rounded.AutoAwesome, null,
+                                tint = Color.White, modifier = Modifier.size(24.dp))
+                            Spacer(Modifier.height(4.dp))
+                            Text("Автозаполнение",
+                                color = Color.White, fontWeight = FontWeight.ExtraBold,
+                                style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    
+                    // Шаблоны
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(MaterialTheme.shapes.large)
+                            .background(Color(0xFF8B5CF6))
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                showTemplate = true
+                            }
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Rounded.Pattern, null,
+                                tint = Color.White, modifier = Modifier.size(24.dp))
+                            Spacer(Modifier.height(4.dp))
+                            Text("Шаблоны",
+                                color = Color.White, fontWeight = FontWeight.ExtraBold,
+                                style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                // Очистить месяц и год
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (isLockedData) Modifier.alpha(0.5f) else Modifier),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Очистить месяц
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(MaterialTheme.shapes.large)
+                            .background(MaterialTheme.colorScheme.errorContainer)
+                            .clickable(enabled = !isLockedData) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                isClearingYear = false
+                                showClearConfirm = true
+                            }
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.CalendarMonth, null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                "Месяц",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+
+                    // Очистить год
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(MaterialTheme.shapes.large)
+                            .background(MaterialTheme.colorScheme.errorContainer)
+                            .clickable(enabled = !isLockedData) {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                isClearingYear = true
+                                showClearConfirm = true
+                            }
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.DateRange, null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                "Год",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                }
+                Text(
+                    "Удалить все смены за выбранный период",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
 
             // ── ПОДДЕРЖКА ──────────────────────────────────────
             // ✏️ ПОМЕНЯЙ СВОЙ EMAIL ЗДЕСЬ ↓
@@ -659,43 +1035,6 @@ fun SettingsScreen(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp))
                 }
-
-                HorizontalDivider(Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant)
-
-                // Telegram поддержка
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(MaterialTheme.shapes.large)
-                        .clickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                data = android.net.Uri.parse("https://t.me/Zzzaaao")
-                            }
-                            runCatching { context.startActivity(intent) }
-                        }
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Box(
-                        Modifier.size(40.dp).clip(MaterialTheme.shapes.medium)
-                            .background(Color(0xFF29B6F6).copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) { Icon(Icons.Rounded.Send, null, tint = Color(0xFF29B6F6), modifier = Modifier.size(20.dp)) }
-                    Column(Modifier.weight(1f)) {
-                        Text("Telegram поддержка",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.Medium)
-                        Text("@Zzzaaao",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF29B6F6))
-                    }
-                    Icon(Icons.Rounded.ChevronRight, null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp))
-                }
             }
 
             Spacer(Modifier.height(16.dp))
@@ -721,6 +1060,101 @@ fun SettingsScreen(
         )
     }
 
+    // ── Автозаполнение ──────────────────────────────────────
+    if (showAutofill) {
+        AutofillBottomSheet(
+            currentMonth  = java.time.YearMonth.now(),
+            onConfirm     = { pattern, startDate, startIndex ->
+                showAutofill = false
+            },
+            onConfirmYear = { pattern, startDate, startIndex ->
+                showAutofill = false
+            },
+            onDismiss     = { showAutofill = false }
+        )
+    }
+
+    // ── Шаблоны ─────────────────────────────────────────────
+    if (showTemplate) {
+        val currentMonth = java.time.YearMonth.now()
+        TemplatePickerSheet(
+            onSelect = { template, startDay ->
+                vm.applyTemplate(template, currentMonth.year, currentMonth.monthValue, startDay)
+                showTemplate = false
+            },
+            onDismiss = { showTemplate = false }
+        )
+    }
+
+    // ── Подтверждение очистки месяца/года ────────────────────────
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            shape = MaterialTheme.shapes.extraLarge,
+            icon = {
+                Icon(
+                    Icons.Rounded.Warning, null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(32.dp)
+                )
+            },
+            title = {
+                Text(
+                    if (isClearingYear) "Очистить год?" else "Очистить месяц?",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        if (isClearingYear) 
+                            "Все смены за ${clearMonthYear} год будут удалены."
+                        else 
+                            "Все смены за выбранный месяц будут удалены."
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Это действие нельзя отменить!",
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (isClearingYear) {
+                            vm.clearYear(clearMonthYear)
+                            Toast.makeText(context, "Год ${clearMonthYear} очищен", Toast.LENGTH_SHORT).show()
+                        } else {
+                            vm.clearMonth(clearMonthYear, clearMonthMonth)
+                            Toast.makeText(context, "Месяц очищен", Toast.LENGTH_SHORT).show()
+                        }
+                        showClearConfirm = false
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    Icon(Icons.Rounded.DeleteForever, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Очистить", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showClearConfirm = false },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large
+                ) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
 }
 
 // ─── TimePicker диалог ────────────────────────────────────────
@@ -767,15 +1201,16 @@ private fun TimePickerDialog(
 // ─── Чип времени (кликабельный) ───────────────────────────────
 @Composable
 private fun TimeChip(time: String, onClick: () -> Unit) {
+    val dimens = rememberAdaptiveDimens()
     Box(
         Modifier
             .clip(MaterialTheme.shapes.medium)
             .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f))
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .padding(horizontal = if (dimens.isCompact) 8.dp else 10.dp, vertical = 6.dp),
         Alignment.Center
     ) {
-        Text(time, style = MaterialTheme.typography.titleSmall,
+        Text(time, style = MaterialTheme.typography.titleSmall.copy(fontSize = dimens.bodyFontSize),
             fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
     }
 }
@@ -821,11 +1256,19 @@ private fun doExportJson(context: Context, vm: SettingsViewModel) {
         val dir  = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val date = SimpleDateFormat("yyyy-MM-dd_HH-mm", Locale.getDefault()).format(Date())
         val file = File(dir, "moygrafik_backup_$date.json")
+        
+        // Получаем все смены для активного профиля
+        val profileId = vm.settings.value.activeProfileId
+        val allShifts = runBlocking {
+            vm.repository.getAllShiftsForProfile(profileId).first()
+        }
+        
         val data = mapOf(
-            "version"  to 1,
+            "version"  to 2,
             "exported" to date,
             "settings" to vm.settings.value,
-            "times"    to vm.shiftTimes.value
+            "times"    to vm.shiftTimes.value,
+            "shifts"   to allShifts
         )
         file.writeText(Gson().toJson(data))
         Toast.makeText(context, "✓ Сохранено: ${file.name}", Toast.LENGTH_LONG).show()
@@ -845,10 +1288,45 @@ private fun doRestore(context: Context, uri: Uri, vm: SettingsViewModel) {
     try {
         val json = context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
             ?: throw Exception("Не удалось прочитать файл")
-        val map  = Gson().fromJson(json, Map::class.java)
-        // Базовая валидация
+        
+        val gson = Gson()
+        val map = gson.fromJson(json, Map::class.java)
+        
         if (map["version"] == null) throw Exception("Неверный формат файла")
-        Toast.makeText(context, "✓ Восстановлено", Toast.LENGTH_SHORT).show()
+        
+        // Восстановить настройки
+        val settingsData = map["settings"]
+        if (settingsData != null) {
+            val settingsJson = gson.toJson(settingsData)
+            val settings = gson.fromJson(settingsJson, AppSettings::class.java)
+            vm.setThemeMode(ThemeMode.valueOf(settings.themeMode))
+            vm.setFontScale(settings.fontScale)
+            vm.setFontLocked(settings.fontLocked)
+            vm.setIsLocked(settings.isLocked)
+            vm.setDynamicColor(settings.dynamicColor)
+            vm.setBreakMinutes(settings.breakMinutes)
+            vm.setCloudBackup(settings.cloudBackupEnabled, settings.cloudBackupUri)
+            vm.setAutoBackup(settings.autoBackupEnabled, settings.autoBackupFrequency)
+            vm.saveWageSettings(settings.hourlyRate, settings.nightCoeff, settings.holidayCoeff, settings.sickCoeff)
+        }
+        
+        // Восстановить время смен
+        val timesData = map["times"]
+        if (timesData != null) {
+            val type = object : TypeToken<List<ShiftTime>>() {}.type
+            val times: List<ShiftTime> = gson.fromJson(gson.toJson(timesData), type)
+            vm.restoreTimes(times)
+        }
+        
+        // Восстановить смены (график)
+        val shiftsData = map["shifts"]
+        if (shiftsData != null) {
+            val type = object : TypeToken<List<ShiftEntry>>() {}.type
+            val shifts: List<ShiftEntry> = gson.fromJson(gson.toJson(shiftsData), type)
+            vm.restoreShifts(shifts)
+        }
+        
+        Toast.makeText(context, "✓ График и настройки восстановлены", Toast.LENGTH_LONG).show()
     } catch (e: Exception) {
         Toast.makeText(context, "Ошибка: ${e.message}", Toast.LENGTH_LONG).show()
     }
@@ -858,30 +1336,33 @@ private fun doRestore(context: Context, uri: Uri, vm: SettingsViewModel) {
 // ─── Переиспользуемые компоненты ──────────────────────────────
 @Composable
 fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    val dimens = rememberAdaptiveDimens()
     Card(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+        Modifier.fillMaxWidth().padding(horizontal = dimens.horizontalPadding),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape  = MaterialTheme.shapes.extraLarge
-    ) { Column(Modifier.padding(16.dp), content = content) }
+    ) { Column(Modifier.padding(dimens.cardPadding), content = content) }
 }
 
 @Composable
 fun SectionHeader(title: String, icon: ImageVector, color: Color) {
+    val dimens = rememberAdaptiveDimens()
     Row(Modifier.padding(bottom = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(icon, null, tint = color, modifier = Modifier.size(16.dp))
-        Text(title, style = MaterialTheme.typography.labelMedium,
+        Icon(icon, null, tint = color, modifier = Modifier.size(dimens.iconSizeSmall - 2.dp))
+        Text(title, style = MaterialTheme.typography.labelMedium.copy(fontSize = dimens.labelFontSize),
             fontWeight = FontWeight.Bold, color = color, letterSpacing = 1.sp)
     }
 }
 
 @Composable
 private fun WageField(label: String, value: String, onValueChange: (String) -> Unit) {
+    val dimens = rememberAdaptiveDimens()
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text(label, style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize), modifier = Modifier.weight(1f))
         OutlinedTextField(
             value = value, onValueChange = onValueChange,
-            modifier = Modifier.width(100.dp), singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.width(if (dimens.isCompact) 80.dp else 100.dp), singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             shape = MaterialTheme.shapes.medium
         )
@@ -909,17 +1390,18 @@ private fun NotifToggleRow(
 
 @Composable
 private fun BackupBtn(icon: ImageVector, label: String, onClick: () -> Unit) {
+    val dimens = rememberAdaptiveDimens()
     Row(
         Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 13.dp),
+            .padding(horizontal = if (dimens.isCompact) 12.dp else 14.dp, vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Icon(icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Icon(icon, null, Modifier.size(dimens.iconSizeSmall), tint = MaterialTheme.colorScheme.primary)
+        Text(label, style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize))
         Spacer(Modifier.weight(1f))
-        Icon(Icons.Rounded.ChevronRight, null, Modifier.size(16.dp),
+        Icon(Icons.Rounded.ChevronRight, null, Modifier.size(dimens.iconSizeSmall - 2.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

@@ -12,8 +12,8 @@ class Converters {
 }
 
 @Database(
-    entities = [ShiftEntry::class, Profile::class, ShiftTime::class, AppSettings::class],
-    version = 8,
+    entities = [ShiftEntry::class, Profile::class, ShiftTime::class, AppSettings::class, ShiftTemplate::class],
+    version = 13,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -22,6 +22,7 @@ abstract class TabelDatabase : RoomDatabase() {
     abstract fun profileDao(): ProfileDao
     abstract fun shiftTimeDao(): ShiftTimeDao
     abstract fun settingsDao(): SettingsDao
+    abstract fun shiftTemplateDao(): ShiftTemplateDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -44,11 +45,8 @@ abstract class TabelDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE settings ADD COLUMN notifDayTime TEXT NOT NULL DEFAULT '19:00'")
             }
         }
-        // v5 → v6: была проблемная — кто-то уже мог иметь notifHoursBefore/dynamicColor,
-        // кто-то нет. Используем безопасный подход: пересоздаём таблицу с нужной схемой.
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Пересоздаём таблицу settings с ПОЛНОЙ итоговой схемой
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS settings_new (
                         id INTEGER NOT NULL PRIMARY KEY,
@@ -66,7 +64,6 @@ abstract class TabelDatabase : RoomDatabase() {
                         cloudBackupUri TEXT NOT NULL DEFAULT ''
                     )
                 """.trimIndent())
-                // Копируем данные из старой таблицы (только те колонки что точно есть)
                 db.execSQL("""
                     INSERT INTO settings_new (
                         id, activeProfileId, themeMode, fontScale,
@@ -86,11 +83,8 @@ abstract class TabelDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE settings_new RENAME TO settings")
             }
         }
-        // v6 → v7: финальная очистка — гарантируем правильную схему на всех устройствах
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // Пересоздаём таблицу с эталонной схемой
-                // (решает проблему устройств с "грязной" v6)
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS settings_new (
                         id INTEGER NOT NULL PRIMARY KEY,
@@ -125,10 +119,65 @@ abstract class TabelDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE settings_new RENAME TO settings")
             }
         }
-        // v7 → v8: добавляем breakMinutes (перерыв/обед в минутах)
         val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE settings ADD COLUMN breakMinutes INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        // v8 → v9: добавляем таблицу шаблонов
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS shift_templates (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        pattern TEXT NOT NULL,
+                        workDays INTEGER NOT NULL DEFAULT 0,
+                        restDays INTEGER NOT NULL DEFAULT 0,
+                        isDefault INTEGER NOT NULL DEFAULT 0,
+                        profileId TEXT NOT NULL DEFAULT 'default'
+                    )
+                """.trimIndent())
+            }
+        }
+        // v9 → v10: добавляем поля автобекапа
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfNotExists(db, "settings", "autoBackupEnabled", "INTEGER NOT NULL DEFAULT 0")
+                addColumnIfNotExists(db, "settings", "autoBackupFrequency", "INTEGER NOT NULL DEFAULT 7")
+            }
+        }
+        // v10 → v11: добавляем поле locked для защиты смен
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfNotExists(db, "shifts", "locked", "INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        // v11 → v12: добавляем fontLocked
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfNotExists(db, "settings", "fontLocked", "INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        // v12 → v13: добавляем isLocked (защита данных)
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfNotExists(db, "settings", "isLocked", "INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        private fun addColumnIfNotExists(db: SupportSQLiteDatabase, table: String, column: String, definition: String) {
+            val cursor = db.query("PRAGMA table_info($table)")
+            val columns = mutableSetOf<String>()
+            while (cursor.moveToNext()) {
+                val nameIndex = cursor.getColumnIndex("name")
+                if (nameIndex >= 0) {
+                    columns.add(cursor.getString(nameIndex))
+                }
+            }
+            cursor.close()
+            if (column !in columns) {
+                db.execSQL("ALTER TABLE $table ADD COLUMN $column $definition")
             }
         }
     }

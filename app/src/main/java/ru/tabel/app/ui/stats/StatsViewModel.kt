@@ -53,30 +53,30 @@ class StatsViewModel @Inject constructor(private val repo: TabelRepository) : Vi
         ShiftType.entries.map { type -> type to shifts.count { it.type == type } }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    private val currentYear: Int get() = YearMonth.now().year
+
     val monthHistory: StateFlow<List<Pair<String, Triple<Int, Float, Float>>>> =
         combine(allShifts, shiftTimes, settings) { shifts, times, s ->
+            val yearPrefix = YearMonth.now().year.toString()
             shifts
+                .filter { it.date.startsWith(yearPrefix) }
                 .groupBy { it.date.substring(0, 7) }
                 .entries
-                .sortedByDescending { it.key }
-                .take(6)
+                .sortedBy { it.key.substring(5).toIntOrNull() ?: 0 }
                 .map { (month, entries) ->
                     val ms = repo.getMonthStats(entries, times, s)
                     month to Triple(entries.size, ms.totalHours, ms.estimatedSalary)
                 }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Итоговая статистика за последние 12 месяцев
     val yearStats: StateFlow<MonthStats> = combine(
         allShifts, shiftTimes, settings
     ) { shifts, times, s ->
-        val cutoff = YearMonth.now().minusMonths(11)
-            .let { "%04d-%02d".format(it.year, it.monthValue) }
-        val yearShifts = shifts.filter { it.date.substring(0, 7) >= cutoff }
+        val yearPrefix = currentYear.toString()
+        val yearShifts = shifts.filter { it.date.startsWith(yearPrefix) }
         repo.getMonthStats(yearShifts, times, s)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MonthStats(0, 0, 0f, 0, 0, 0, 0f))
 
-    // Все смены для экспорта (не только текущий месяц)
     @OptIn(ExperimentalCoroutinesApi::class)
     val allShiftsForExport: StateFlow<List<ShiftEntry>> = allShifts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

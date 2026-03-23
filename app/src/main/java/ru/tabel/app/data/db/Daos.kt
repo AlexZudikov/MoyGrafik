@@ -32,6 +32,9 @@ interface ShiftDao {
     @Query("DELETE FROM shifts WHERE profileId = :profileId AND date LIKE :monthPrefix || '%'")
     suspend fun deleteShiftsForMonth(profileId: String, monthPrefix: String)
 
+    @Query("DELETE FROM shifts WHERE profileId = :profileId AND date LIKE :yearPrefix || '%'")
+    suspend fun deleteShiftsForYear(profileId: String, yearPrefix: String)
+
     @Query("DELETE FROM shifts WHERE profileId = :profileId")
     suspend fun deleteAllShiftsForProfile(profileId: String)
 }
@@ -94,4 +97,27 @@ interface SettingsDao {
 
     @Query("UPDATE settings SET activeProfileId = :id WHERE id = 1")
     suspend fun setActiveProfile(id: String)
+}
+
+// ── DAO для шаблонов смен ──────────────────────────────────────
+@Dao
+interface ShiftTemplateDao {
+
+    @Query("SELECT * FROM shift_templates WHERE profileId = :profileId ORDER BY isDefault DESC, name ASC")
+    fun getTemplatesForProfile(profileId: String): Flow<List<ShiftTemplate>>
+
+    @Query("SELECT * FROM shift_templates WHERE id = :id")
+    suspend fun getTemplateById(id: String): ShiftTemplate?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTemplate(template: ShiftTemplate)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTemplates(templates: List<ShiftTemplate>)
+
+    @Delete
+    suspend fun deleteTemplate(template: ShiftTemplate)
+
+    @Query("DELETE FROM shift_templates WHERE profileId = :profileId AND isDefault = 0")
+    suspend fun deleteCustomTemplates(profileId: String)
 }

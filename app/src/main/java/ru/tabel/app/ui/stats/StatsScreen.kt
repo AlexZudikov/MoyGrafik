@@ -26,6 +26,7 @@ import ru.tabel.app.ui.theme.animatedInt
 import ru.tabel.app.ui.theme.animatedFraction
 import ru.tabel.app.ui.theme.SlideCounter
 import ru.tabel.app.ui.theme.morphColor
+import ru.tabel.app.ui.theme.rememberAdaptiveDimens
 import java.time.YearMonth
 import ru.tabel.app.ui.stats.ExportDialog
 
@@ -45,6 +46,7 @@ fun StatsScreen(viewModel: StatsViewModel = hiltViewModel()) {
     val settings      by viewModel.settings.collectAsState()
     val selectedMonth by viewModel.selectedMonth.collectAsState()
     val monthShifts   by viewModel.monthShifts.collectAsState()
+    val dimens        = rememberAdaptiveDimens()
 
     val isCurrentMonth = selectedMonth == YearMonth.now()
 
@@ -59,24 +61,24 @@ fun StatsScreen(viewModel: StatsViewModel = hiltViewModel()) {
         Row(
             Modifier.fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = dimens.horizontalPadding, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column {
                 Text("Статистика",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = dimens.titleFontSize),
                     fontWeight = FontWeight.ExtraBold)
                 Text(
                     "${MONTHS_FULL[selectedMonth.monthValue - 1]} ${selectedMonth.year}",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = dimens.labelFontSize),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Кнопка экспорта
                 Box(
-                    Modifier.size(40.dp).clip(CircleShape)
+                    Modifier.size(dimens.buttonHeight - 8.dp).clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                         .clickable {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -86,11 +88,11 @@ fun StatsScreen(viewModel: StatsViewModel = hiltViewModel()) {
                 ) {
                     Icon(Icons.Rounded.FileDownload, null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp))
+                        modifier = Modifier.size(dimens.iconSizeSmall))
                 }
                 // Кнопка уведомлений
                 Box(
-                    Modifier.size(40.dp).clip(CircleShape)
+                    Modifier.size(dimens.buttonHeight - 8.dp).clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
                         .clickable {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -100,7 +102,7 @@ fun StatsScreen(viewModel: StatsViewModel = hiltViewModel()) {
                 ) {
                     Icon(Icons.Rounded.Notifications, null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp))
+                        modifier = Modifier.size(dimens.iconSizeSmall))
                 }
             }
         }
@@ -166,27 +168,27 @@ fun StatsScreen(viewModel: StatsViewModel = hiltViewModel()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
 
             // ── СМЕНЫ ─────────────────────────────────────────
-            SectionTitle("СМЕНЫ", Icons.Rounded.BarChart)
+            SectionTitle(dimens = dimens, title = "СМЕНЫ", Icons.Rounded.BarChart)
 
             AnimatedContent(targetState = stats, label = "stats_anim") { s ->
                 Column {
-                    Row(Modifier.padding(horizontal = 12.dp),
+                    Row(Modifier.padding(horizontal = dimens.horizontalPadding),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        BigCard(s.workShifts.toString(),   "Рабочих смен", Color(0xFF4F6EF7), Modifier.weight(1f))
-                        BigCard(s.totalHours.toInt().toString(), "Раб. часов",  Color(0xFF8B5CF6), Modifier.weight(1f))
+                        BigCard(dimens = dimens, value = s.workShifts.toString(),   "Рабочих смен", Color(0xFF4F6EF7), Modifier.weight(1f))
+                        BigCard(dimens = dimens, value = s.totalHours.toInt().toString(), "Раб. часов",  Color(0xFF8B5CF6), Modifier.weight(1f))
                     }
                     Spacer(Modifier.height(8.dp))
-                    Row(Modifier.padding(horizontal = 12.dp),
+                    Row(Modifier.padding(horizontal = dimens.horizontalPadding),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        BigCard(s.offDays.toString(),      "Выходных",  Color(0xFF22c55e), Modifier.weight(1f))
-                        BigCard(s.nightShifts.toString(),  "Ночных",    Color(0xFFa855f7), Modifier.weight(1f))
+                        BigCard(dimens = dimens, value = s.offDays.toString(),      "Выходных",  Color(0xFF22c55e), Modifier.weight(1f))
+                        BigCard(dimens = dimens, value = s.nightShifts.toString(),  "Ночных",    Color(0xFFa855f7), Modifier.weight(1f))
                     }
                     Spacer(Modifier.height(8.dp))
 
                     // ── Норма и переработки ───────────────────
                     if (s.totalHours > 0f) {
                         Card(
-                            Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                            Modifier.fillMaxWidth().padding(horizontal = dimens.horizontalPadding),
                             colors = CardDefaults.cardColors(
                                 containerColor = when {
                                     s.overtimeHours > 0  -> Color(0xFFEA580C).copy(alpha = 0.1f)
@@ -268,49 +270,106 @@ fun StatsScreen(viewModel: StatsViewModel = hiltViewModel()) {
             }
 
             // ── ЗАРПЛАТА ──────────────────────────────────────
-            SectionTitle("ЗАРПЛАТА", Icons.Rounded.CurrencyRuble)
+            SectionTitle(dimens = dimens, title = "ЗАРПЛАТА", Icons.Rounded.CurrencyRuble)
 
             Card(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                Modifier.fillMaxWidth().padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF22c55e).copy(alpha = 0.15f)),
                 shape = MaterialTheme.shapes.extraLarge
             ) {
-                Column(Modifier.padding(16.dp)) {
+                Column(Modifier.padding(dimens.cardPadding)) {
                     Text("ЗАРПЛАТА",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = dimens.labelFontSize),
                         color = Color(0xFF22c55e).copy(alpha = 0.7f),
                         letterSpacing = 1.sp)
                     if (settings.hourlyRate > 0) {
                         Text(
                             "%,d ₽".format(stats.estimatedSalary.toInt()).replace(",", " "),
-                            style = MaterialTheme.typography.headlineLarge,
+                            style = MaterialTheme.typography.headlineLarge.copy(
+                                fontSize = if (dimens.isCompact) 28.sp else 36.sp
+                            ),
                             fontWeight = FontWeight.ExtraBold)
                         Text("${stats.totalHours.toInt()} ч × ${settings.hourlyRate.toInt()}₽/ч",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = dimens.labelFontSize),
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         Text("0 ₽",
-                            style = MaterialTheme.typography.headlineLarge,
+                            style = MaterialTheme.typography.headlineLarge.copy(
+                                fontSize = if (dimens.isCompact) 28.sp else 36.sp
+                            ),
                             fontWeight = FontWeight.ExtraBold)
                         Text("Укажите ставку в Настройках",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = dimens.labelFontSize),
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
 
             // ── ПО ТИПАМ ──────────────────────────────────────
-            SectionTitle("ПО ТИПАМ", Icons.Rounded.PieChart)
+            SectionTitle(dimens = dimens, title = "ПО ТИПАМ", Icons.Rounded.PieChart)
 
             Card(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                Modifier.fillMaxWidth().padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = MaterialTheme.shapes.extraLarge
             ) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val nonEmptyTypes = typeCounts.filter { it.second > 0 }
                     val totalForBar = stats.totalShifts.coerceAtLeast(1)
-                    typeCounts.filter { it.second > 0 }.forEach { (type, count) ->
+                    
+                    if (nonEmptyTypes.isNotEmpty()) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            PieChart(
+                                segments = nonEmptyTypes.map { (type, count) ->
+                                    PieSegment(Color(type.color), count.toFloat(), type.label)
+                                },
+                                modifier = Modifier.size(if (dimens.isCompact) 100.dp else 120.dp)
+                            )
+                            
+                            Column(
+                                Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                nonEmptyTypes.take(4).forEach { (type, count) ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Box(
+                                            Modifier.size(10.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(type.color))
+                                        )
+                                        Text(
+                                            "${type.icon} ${type.label}",
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = dimens.labelFontSize),
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Text(
+                                            count.toString(),
+                                            style = MaterialTheme.typography.bodySmall.copy(fontSize = dimens.labelFontSize),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                if (nonEmptyTypes.size > 4) {
+                                    Text(
+                                        "+${nonEmptyTypes.size - 4} ещё",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = dimens.labelFontSize),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    
+                    nonEmptyTypes.forEach { (type, count) ->
                         TypeBar(
+                            dimens = dimens,
                             label = type.label, icon = type.icon,
                             color = Color(type.color), count = count, total = totalForBar
                         )
@@ -324,35 +383,36 @@ fun StatsScreen(viewModel: StatsViewModel = hiltViewModel()) {
                 }
             }
 
-            // ── ИТОГО ЗА ГОД ──────────────────────────────────
-            SectionTitle("ИТОГО ЗА ГОД", Icons.Rounded.CalendarViewMonth)
+            // ── ИТОГО ЗА ТЕКУЩИЙ ГОД ──────────────────────────
+            SectionTitle(dimens = dimens, title = "ИТОГО ЗА ${java.time.Year.now().value}", Icons.Rounded.CalendarViewMonth)
             Card(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                Modifier.fillMaxWidth().padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = MaterialTheme.shapes.extraLarge
             ) {
                 Row(
-                    Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    Modifier.padding(horizontal = dimens.cardPadding, vertical = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
-                    YearStatChip("${yearStats.workShifts}", "смен", Color(0xFF4F6EF7), Modifier.weight(1f))
-                    YearStatChip("${yearStats.totalHours.toInt()}", "часов", Color(0xFF8B5CF6), Modifier.weight(1f))
+                    YearStatChip(dimens = dimens, value = "${yearStats.workShifts}", "смен", Color(0xFF4F6EF7), Modifier.weight(1f))
+                    YearStatChip(dimens = dimens, value = "${yearStats.totalHours.toInt()}", "часов", Color(0xFF8B5CF6), Modifier.weight(1f))
                     if (settings.hourlyRate > 0) {
                         YearStatChip(
-                            "%,d".format(yearStats.estimatedSalary.toInt()).replace(",", " "),
+                            dimens = dimens,
+                            value = "%,d".format(yearStats.estimatedSalary.toInt()).replace(",", " "),
                             "₽ итого", Color(0xFF22c55e), Modifier.weight(1f)
                         )
                     } else {
-                        YearStatChip("${yearStats.offDays}", "выходных", Color(0xFF22c55e), Modifier.weight(1f))
+                        YearStatChip(dimens = dimens, value = "${yearStats.offDays}", "выходных", Color(0xFF22c55e), Modifier.weight(1f))
                     }
                 }
             }
 
-            // ── ИСТОРИЯ ───────────────────────────────────────
-            SectionTitle("ИСТОРИЯ", Icons.Rounded.History)
+            // ── МЕСЯЦЫ ТЕКУЩЕГО ГОДА ─────────────────────────
+            SectionTitle(dimens = dimens, title = "МЕСЯЦЫ ${java.time.Year.now().value}", Icons.Rounded.History)
 
             Card(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                Modifier.fillMaxWidth().padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = MaterialTheme.shapes.extraLarge
             ) {
@@ -363,9 +423,10 @@ fun StatsScreen(viewModel: StatsViewModel = hiltViewModel()) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(8.dp))
                     } else {
+                        // Показываем первые 6 месяцев от начала года (Янв → Июн)
                         history.take(6).forEach { (monthKey, data) ->
                             val parts = monthKey.split("-")
-                            val label = "${MONTHS_SHORT[parts[1].toInt()-1]} ${parts[0]}"
+                            val label = "${MONTHS_SHORT[parts[1].toInt()-1]}"
                             HistoryItem(
                                 monthLabel = label,
                                 shifts     = data.first,
@@ -376,6 +437,26 @@ fun StatsScreen(viewModel: StatsViewModel = hiltViewModel()) {
                                     selectedMonth.year, selectedMonth.monthValue)
                             )
                         }
+                    }
+                }
+            }
+
+            // ── ЧАСЫ ПО МЕСЯЦАМ ──────────────────────────────
+            if (history.isNotEmpty()) {
+                SectionTitle(dimens = dimens, title = "ЧАСЫ ${java.time.Year.now().value}", Icons.Rounded.BarChart)
+                
+                Card(
+                    Modifier.fillMaxWidth().padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = MaterialTheme.shapes.extraLarge
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        MonthlyBarChart(
+                            months = history,
+                            normHours = stats.normHours,
+                            modifier = Modifier.fillMaxWidth()
+                                .height(if (dimens.isCompact) 140.dp else 160.dp)
+                        )
                     }
                 }
             }
@@ -402,15 +483,19 @@ fun StatsScreen(viewModel: StatsViewModel = hiltViewModel()) {
 // ── Компоненты ────────────────────────────────────────────────
 
 @Composable
-private fun SectionTitle(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+private fun SectionTitle(
+    dimens: ru.tabel.app.ui.theme.AdaptiveDimens,
+    title: String, 
+    icon: androidx.compose.ui.graphics.vector.ImageVector
+) {
     Row(
-        Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        Modifier.padding(horizontal = dimens.horizontalPadding, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(icon, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Icon(icon, null, Modifier.size(dimens.iconSizeSmall - 4.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(title,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = dimens.labelFontSize),
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             letterSpacing = 1.sp)
@@ -418,34 +503,44 @@ private fun SectionTitle(title: String, icon: androidx.compose.ui.graphics.vecto
 }
 
 @Composable
-private fun BigCard(value: String, label: String, color: Color, modifier: Modifier) {
+private fun BigCard(
+    dimens: ru.tabel.app.ui.theme.AdaptiveDimens,
+    value: String, label: String, color: Color, modifier: Modifier
+) {
     val numValue = value.toIntOrNull()
     Card(
         modifier = modifier,
         colors   = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         shape    = MaterialTheme.shapes.extraLarge
     ) {
-        Column(Modifier.padding(16.dp)) {
+        Column(Modifier.padding(dimens.cardPadding)) {
             if (numValue != null) {
                 SlideCounter(count = numValue) { v ->
                     Text(v.toString(),
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontSize = if (dimens.isCompact) 22.sp else 28.sp
+                        ),
                         fontWeight = FontWeight.ExtraBold, color = color)
                 }
             } else {
                 Text(value,
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = MaterialTheme.typography.headlineMedium.copy(
+                        fontSize = if (dimens.isCompact) 22.sp else 28.sp
+                    ),
                     fontWeight = FontWeight.ExtraBold, color = color)
             }
             Text(label,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = dimens.labelFontSize),
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
-private fun TypeBar(label: String, icon: String, color: Color, count: Int, total: Int) {
+private fun TypeBar(
+    dimens: ru.tabel.app.ui.theme.AdaptiveDimens = rememberAdaptiveDimens(),
+    label: String, icon: String, color: Color, count: Int, total: Int
+) {
     val pct by animateFloatAsState(
         targetValue   = if (total > 0) count.toFloat() / total else 0f,
         animationSpec = tween(600, easing = FastOutSlowInEasing),
@@ -453,12 +548,12 @@ private fun TypeBar(label: String, icon: String, color: Color, count: Int, total
     )
     Row(verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Box(Modifier.size(36.dp).clip(CircleShape).background(color.copy(alpha = 0.2f)),
+        Box(Modifier.size(if (dimens.isCompact) 32.dp else 36.dp).clip(CircleShape).background(color.copy(alpha = 0.2f)),
             contentAlignment = Alignment.Center) {
-            Text(icon, fontSize = 16.sp)
+            Text(icon, fontSize = if (dimens.isCompact) 14.sp else 16.sp)
         }
         Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+            Text(label, style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize), fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(4.dp))
             Box(Modifier.fillMaxWidth().height(4.dp).clip(MaterialTheme.shapes.small)
                 .background(MaterialTheme.colorScheme.surfaceVariant)) {
@@ -466,7 +561,7 @@ private fun TypeBar(label: String, icon: String, color: Color, count: Int, total
             }
         }
         Text(count.toString(),
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = dimens.titleFontSize),
             fontWeight = FontWeight.Bold)
     }
 }
@@ -511,17 +606,147 @@ private fun HistoryItem(
 }
 
 @Composable
-private fun YearStatChip(value: String, label: String, color: Color, modifier: Modifier) {
+private fun YearStatChip(
+    dimens: ru.tabel.app.ui.theme.AdaptiveDimens = rememberAdaptiveDimens(),
+    value: String, label: String, color: Color, modifier: Modifier
+) {
     Column(
         modifier = modifier,
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
     ) {
         Text(value,
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleLarge.copy(fontSize = dimens.titleFontSize),
             fontWeight = FontWeight.ExtraBold,
             color = color)
         Text(label,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = dimens.labelFontSize),
             color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private data class PieSegment(val color: Color, val value: Float, val label: String)
+
+@Composable
+private fun PieChart(
+    segments: List<PieSegment>,
+    modifier: Modifier = Modifier
+) {
+    val total = segments.sumOf { it.value.toDouble() }.toFloat().coerceAtLeast(1f)
+    val animatedProgress by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = tween(800, easing = FastOutSlowInEasing),
+        label = "pie_anim"
+    )
+    
+    Canvas(modifier = modifier) {
+        val strokeWidth = size.minDimension * 0.2f
+        val radius = (size.minDimension - strokeWidth) / 2
+        val center = center
+        
+        var startAngle = -90f
+        segments.forEach { segment ->
+            val sweepAngle = (segment.value / total) * 360f * animatedProgress
+            drawArc(
+                color = segment.color,
+                startAngle = startAngle,
+                sweepAngle = sweepAngle,
+                useCenter = false,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokeWidth),
+                topLeft = androidx.compose.ui.geometry.Offset(
+                    center.x - radius,
+                    center.y - radius
+                ),
+                size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2)
+            )
+            startAngle += sweepAngle
+        }
+    }
+}
+
+@Composable
+private fun MonthlyBarChart(
+    months: List<Pair<String, Triple<Int, Float, Float>>>,
+    normHours: Float,
+    modifier: Modifier = Modifier
+) {
+    val maxHours = (months.maxOfOrNull { it.second.second } ?: normHours).coerceAtLeast(normHours)
+    val animatedProgress by animateFloatAsState(
+        targetValue = 1f,
+        animationSpec = tween(800, easing = FastOutSlowInEasing),
+        label = "bar_chart_anim"
+    )
+    
+    Column(modifier) {
+        Box(
+            modifier = Modifier.weight(1f).fillMaxWidth()
+        ) {
+            if (normHours > 0) {
+                val normY = 1f - (normHours / maxHours)
+                Box(
+                    Modifier.fillMaxWidth()
+                        .fillMaxHeight(normY)
+                        .align(Alignment.BottomCenter)
+                ) {
+                    Box(
+                        Modifier.fillMaxWidth().height(1.dp)
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
+                    )
+                }
+            }
+            
+            Row(
+                modifier = Modifier.fillMaxSize(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                months.forEachIndexed { index, (monthKey, data) ->
+                    val hours = data.second
+                    val barHeight = if (maxHours > 0) hours / maxHours else 0f
+                    val isOverNorm = hours > normHours && normHours > 0
+                    val barColor = when {
+                        isOverNorm -> Color(0xFFEA580C)
+                        hours >= normHours * 0.9f -> Color(0xFF22c55e)
+                        else -> Color(0xFF4F6EF7)
+                    }
+                    
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Bottom
+                    ) {
+                        Text(
+                            "${hours.toInt()}ч",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                            fontWeight = FontWeight.Bold,
+                            color = barColor
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Box(
+                            Modifier.fillMaxWidth(0.6f)
+                                .fillMaxHeight(barHeight * animatedProgress)
+                                .clip(MaterialTheme.shapes.small)
+                                .background(barColor.copy(alpha = 0.85f))
+                        )
+                    }
+                }
+            }
+        }
+        
+        Spacer(Modifier.height(4.dp))
+        
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            months.forEach { (monthKey, _) ->
+                val parts = monthKey.split("-")
+                val label = MONTHS_SHORT[parts[1].toInt() - 1]
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }

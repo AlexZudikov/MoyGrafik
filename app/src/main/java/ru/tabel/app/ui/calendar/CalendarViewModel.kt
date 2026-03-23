@@ -72,6 +72,20 @@ class CalendarViewModel @Inject constructor(
     ) { shifts, times, s -> repo.getMonthStats(shifts, times, s) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MonthStats(0, 0, 0f, 0, 0, 0, 0f))
 
+    private val allShifts: StateFlow<List<ShiftEntry>> = activeProfile
+        .flatMapLatest { profile ->
+            if (profile?.id == null) flowOf(emptyList())
+            else repo.getAllShiftsForProfile(profile.id)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val todayShift: StateFlow<ShiftEntry?> = allShifts
+        .map { shifts ->
+            val today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
+            shifts.find { it.date == today }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
     // ── Навигация ──────────────────────────────────────────────
     fun previousMonth() { _currentMonth.update { it.minusMonths(1) } }
     fun nextMonth()     { _currentMonth.update { it.plusMonths(1) } }
@@ -85,7 +99,8 @@ class CalendarViewModel @Inject constructor(
 
     // ── Сохранение смены + перепланирование уведомлений ───────
     fun saveShift(date: String, type: ShiftType?, note: String,
-                  customStart: String? = null, customEnd: String? = null) {
+                  customStart: String? = null, customEnd: String? = null,
+                  locked: Boolean = false) {
         val profileId = activeProfile.value?.id ?: return
         viewModelScope.launch {
             if (type == null) {
@@ -97,7 +112,8 @@ class CalendarViewModel @Inject constructor(
                     type            = type,
                     note            = note,
                     customStartTime = customStart,
-                    customEndTime   = customEnd
+                    customEndTime   = customEnd,
+                    locked          = locked
                 ))
             }
             rescheduleNotifications()
@@ -108,12 +124,11 @@ class CalendarViewModel @Inject constructor(
     fun autofillMonth(pattern: List<ShiftType>, startDate: LocalDate, startIndex: Int = 0) {
         val profileId = activeProfile.value?.id ?: return
         if (pattern.isEmpty()) return
-        val month = _currentMonth.value
         viewModelScope.launch {
             repo.autofillMonth(
                 profileId  = profileId,
-                year       = month.year,
-                month      = month.monthValue,
+                year       = startDate.year,
+                month      = startDate.monthValue,
                 pattern    = pattern,
                 startDay   = startDate.dayOfMonth,
                 startIndex = startIndex
@@ -129,7 +144,8 @@ class CalendarViewModel @Inject constructor(
         viewModelScope.launch {
             var idx = startIndex
             var current = startDate
-            val endDate = startDate.plusYears(1)
+            // Ограничиваем до конца текущего года
+            val endDate = LocalDate.of(startDate.year, 12, 31)
             while (!current.isAfter(endDate)) {
                 val ym = YearMonth.of(current.year, current.month)
                 val startDay = if (current.year == startDate.year &&
@@ -161,6 +177,34 @@ class CalendarViewModel @Inject constructor(
             repo.shiftDao.deleteShiftsForMonth(
                 profileId, "%04d-%02d".format(month.year, month.monthValue)
             )
+            rescheduleNotifications()
+        }
+    }
+
+    fun clearYear() {
+        val profileId = activeProfile.value?.id ?: return
+        val month = _currentMonth.value
+        viewModelScope.launch {
+            repo.shiftDao.deleteShiftsForYear(
+                profileId, "%04d".format(month.year)
+            )
+            rescheduleNotifications()
+        }
+    }
+
+    // ── Применение шаблона ────────────────────────────────────
+    fun applyTemplate(template: ShiftTemplate, year: Int, month: Int, startDay: Int = 1) {
+        val profileId = activeProfile.value?.id ?: return
+        viewModelScope.launch {
+            repo.applyTemplate(profileId, template, year, month, startDay)
+            rescheduleNotifications()
+        }
+    }
+
+    fun applyTemplateToYear(template: ShiftTemplate, startYear: Int, startMonth: Int, startDay: Int = 1) {
+        val profileId = activeProfile.value?.id ?: return
+        viewModelScope.launch {
+            repo.applyTemplateToYear(profileId, template, startYear, startMonth, startDay)
             rescheduleNotifications()
         }
     }

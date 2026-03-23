@@ -23,16 +23,19 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import ru.tabel.app.data.model.*
 import ru.tabel.app.ui.components.ShiftBottomSheet
+import ru.tabel.app.ui.templates.TemplatePickerSheet
 import ru.tabel.app.ui.theme.animatedInt
 import ru.tabel.app.ui.theme.pulseScale
 import ru.tabel.app.ui.theme.pressScale
 import ru.tabel.app.ui.theme.bounceEnter
 import ru.tabel.app.ui.theme.morphColor
+import ru.tabel.app.ui.theme.rememberAdaptiveDimens
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -53,16 +56,11 @@ private val ShiftType.abbr get() = when (this) {
     ShiftType.VACATION -> "Отп"   // Отпуск
 }
 
-// ── Семантические цвета (яркие, не перепутаешь) ──────────────
-private val ShiftType.semanticColor get() = when (this) {
-    ShiftType.DAY      -> Color(0xFF2563EB)  // насыщенный синий  — рабочий день
-    ShiftType.NIGHT    -> Color(0xFF7C3AED)  // фиолетовый        — ночь
-    ShiftType.SLEEP    -> Color(0xFF9333EA)  // лиловый           — отсыпной
-    ShiftType.OFF      -> Color(0xFF16A34A)  // зелёный           — выходной
-    ShiftType.HOLIDAY  -> Color(0xFFDC2626)  // красный           — праздник
-    ShiftType.SICK     -> Color(0xFFEA580C)  // оранжевый         — больничный
-    ShiftType.VACATION -> Color(0xFF0891B2)  // голубой           — отпуск
-}
+// ── Семантические цвета — берём из ShiftType ────────────────
+private val ShiftType.semanticColor get() = this.colorValue
+
+// Типы смен со светлым цветом — нужен тёмный текст на фоне
+private val LIGHT_SHIFT_COLORS = setOf(ShiftType.SLEEP, ShiftType.VACATION)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,21 +77,30 @@ fun CalendarScreen(
     val upcomingShifts by viewModel.upcomingShifts.collectAsState()
     val allProfiles    by viewModel.allProfiles.collectAsState()
     val shiftTimes     by viewModel.shiftTimes.collectAsState()
+    val todayShift     by viewModel.todayShift.collectAsState()
+    val dimens         = rememberAdaptiveDimens()
 
     var showShiftSheet  by remember { mutableStateOf(false) }
     var editingDate     by remember { mutableStateOf<String?>(null) }
     var showAutofill    by remember { mutableStateOf(false) }
     var showNotifSheet  by remember { mutableStateOf(false) }
     var showProfileMenu by remember { mutableStateOf(false) }
+    var showTemplate    by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        viewModel.goToToday()
+    }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
 
         CalendarHeader(
+            dimens        = dimens,
             month          = currentMonth,
             profileName    = activeProfile?.name,
             profileColor   = activeProfile?.color?.let { Color(it) },
             onNotifClick   = { showNotifSheet = true },
-            onProfileClick = { if (allProfiles.size > 1) showProfileMenu = true }
+            onProfileClick = { if (allProfiles.size > 1) showProfileMenu = true },
+            onAutofillClick = { showAutofill = true }
         )
 
         // ── Быстрый переключатель профиля ─────────────────────
@@ -151,12 +158,16 @@ fun CalendarScreen(
 
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
 
-            // ── Следующая смена ───────────────────────────────
-            NextShiftCard(upcoming = upcomingShifts, shiftTimes = shiftTimes)
+            // ── Сегодня ───────────────────────────────────────────
+            TodayCard(
+                dimens = dimens,
+                todayShift = todayShift,
+                shiftTimes = shiftTimes
+            )
 
             // ── Карточка с календарём ─────────────────────────
             Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = dimens.horizontalPadding, vertical = dimens.cardPadding / 1.5f),
                 colors   = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surface),
                 shape = MaterialTheme.shapes.extraLarge
@@ -244,7 +255,7 @@ fun CalendarScreen(
                     // Сетка календаря
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(7),
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = dimens.calendarGridMaxHeight),
                         userScrollEnabled = false,
                         verticalArrangement   = Arrangement.spacedBy(3.dp),
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -295,7 +306,7 @@ fun CalendarScreen(
                             Text("График пустой",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold)
-                            Text("Нажми на день чтобы добавить смену, или используй «Автозаполнение» ниже",
+                            Text("Нажми на день чтобы добавить смену",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -305,122 +316,7 @@ fun CalendarScreen(
 
             // ── Статистика месяца ─────────────────────────────
             if (hasAnyShifts) {
-                // StatsStrip убран — данные есть во вкладке Статистика
-            }
-
-            // ── Детали выбранного дня ─────────────────────────
-            selectedDate?.let { date ->
-                DayDetailCard(date = date, shift = selectedShift) {
-                    editingDate = date
-                    showShiftSheet = true
-                }
-            }
-
-            // ── Кнопки автозаполнения и очистки ──────────────
-            var showClearConfirm by remember { mutableStateOf(false) }
-            Row(
-                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // ── АВТОЗАПОЛНЕНИЕ — главная кнопка ──────────────
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .clip(MaterialTheme.shapes.large)
-                        .background(
-                            androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                listOf(
-                                    MaterialTheme.colorScheme.primary,
-                                    MaterialTheme.colorScheme.secondary
-                                )
-                            )
-                        )
-                        .clickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            showAutofill = true
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            Icons.Rounded.AutoAwesome, null,
-                            tint = Color.White,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            "Автозаполнение",
-                            color = Color.White,
-                            fontWeight = FontWeight.ExtraBold,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
-                // ── ОЧИСТИТЬ — маленькая иконка-кнопка ───────────
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(MaterialTheme.shapes.large)
-                        .background(
-                            MaterialTheme.colorScheme.error.copy(alpha = 0.10f)
-                        )
-                        .border(
-                            1.dp,
-                            MaterialTheme.colorScheme.error.copy(alpha = 0.4f),
-                            MaterialTheme.shapes.large
-                        )
-                        .clickable {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            showClearConfirm = true
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Rounded.DeleteSweep, null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-
-            if (showClearConfirm) {
-                androidx.compose.ui.window.Dialog(onDismissRequest = { showClearConfirm = false }) {
-                    Card(shape = MaterialTheme.shapes.extraLarge,
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface)) {
-                        Column(Modifier.padding(24.dp),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                            Text("Очистить месяц?",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.ExtraBold)
-                            Text("Все смены за ${MONTHS[currentMonth.monthValue-1]} будут удалены.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
-                                    onClick = { showClearConfirm = false },
-                                    modifier = Modifier.weight(1f),
-                                    shape = MaterialTheme.shapes.large
-                                ) { Text("Отмена") }
-                                Button(
-                                    onClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        viewModel.clearMonth()
-                                        showClearConfirm = false
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    shape = MaterialTheme.shapes.large,
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.error)
-                                ) { Text("Удалить", fontWeight = FontWeight.Bold) }
-                            }
-                        }
-                    }
-                }
+                StatsStrip(stats = stats)
             }
 
             Spacer(Modifier.height(16.dp))
@@ -436,8 +332,8 @@ fun CalendarScreen(
             currentShift     = curShift,
             defaultStartTime = defST?.startTime ?: "08:00",
             defaultEndTime   = defST?.endTime   ?: "20:00",
-            onSave = { type, note, start, end ->
-                viewModel.saveShift(editingDate!!, type, note, start, end)
+            onSave = { type, note, start, end, locked ->
+                viewModel.saveShift(editingDate!!, type, note, start, end, locked)
                 showShiftSheet = false
             },
             onDismiss = { showShiftSheet = false }
@@ -462,23 +358,35 @@ fun CalendarScreen(
     if (showNotifSheet) {
         ru.tabel.app.ui.settings.NotifSheet(onDismiss = { showNotifSheet = false })
     }
+    
+    if (showTemplate) {
+        TemplatePickerSheet(
+            onSelect = { template, startDay ->
+                viewModel.applyTemplate(template, currentMonth.year, currentMonth.monthValue, startDay)
+                showTemplate = false
+            },
+            onDismiss = { showTemplate = false }
+        )
+    }
 }
 
 // ── Хедер ─────────────────────────────────────────────────────
 @Composable
 private fun CalendarHeader(
+    dimens: ru.tabel.app.ui.theme.AdaptiveDimens,
     month: YearMonth,
     profileName: String?,
     profileColor: Color?,
     onNotifClick: () -> Unit,
-    onProfileClick: () -> Unit
+    onProfileClick: () -> Unit,
+    onAutofillClick: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = dimens.horizontalPadding, vertical = 10.dp),
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -505,25 +413,29 @@ private fun CalendarHeader(
             }
             Column {
                 Text("Мой График",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = dimens.titleFontSize),
                     fontWeight = FontWeight.ExtraBold)
                 Row(verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
                         "${MONTHS[month.monthValue-1]} ${month.year}" +
                             if (profileName != null) " · $profileName" else "",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = dimens.labelFontSize),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (profileName != null && true) {
                         Icon(Icons.Rounded.ExpandMore, null,
-                            modifier = Modifier.size(12.dp),
+                            modifier = Modifier.size(dimens.iconSizeSmall - 6.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
         }
-        HeaderIconBtn(Icons.Rounded.Notifications) {
+        HeaderIconBtn(dimens = dimens, icon = Icons.Rounded.AutoAwesome) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            onAutofillClick()
+        }
+        HeaderIconBtn(dimens = dimens, icon = Icons.Rounded.Notifications) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             onNotifClick()
         }
@@ -532,18 +444,19 @@ private fun CalendarHeader(
 
 @Composable
 private fun HeaderIconBtn(
+    dimens: ru.tabel.app.ui.theme.AdaptiveDimens,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit
 ) {
     Box(
-        modifier = Modifier.size(40.dp).clip(CircleShape)
+        modifier = Modifier.size(dimens.buttonHeight - 8.dp).clip(CircleShape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp))
+            modifier = Modifier.size(dimens.iconSizeSmall))
     }
 }
 
@@ -617,43 +530,143 @@ private fun StatsStrip(stats: MonthStats) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        StatChip(stats.workShifts.toString(),           "СМЕН",     Color(0xFF2563EB), Modifier.weight(1f))
-        StatChip(stats.totalHours.toInt().toString(),   "ЧАСОВ",    Color(0xFF7C3AED), Modifier.weight(1f))
-        StatChip(stats.offDays.toString(),              "ВЫХОДНЫХ", Color(0xFF16A34A), Modifier.weight(1f))
-        StatChip(stats.estimatedSalary.toInt().toString(), "₽",     Color(0xFFEA580C), Modifier.weight(1f))
+        StatChip(formatNumber(stats.workShifts),           "СМЕН",     Color(0xFF2563EB), Modifier.weight(1f))
+        StatChip(formatNumber(stats.totalHours.toInt()),    "ЧАСОВ",    Color(0xFF7C3AED), Modifier.weight(1f))
+        StatChip(formatNumber(stats.offDays),               "ВЫХОДНЫХ", Color(0xFF16A34A), Modifier.weight(1f))
+        StatChip(formatNumber(stats.estimatedSalary.toInt()) + " ₽", "РУБЛЕЙ",  Color(0xFFEA580C), Modifier.weight(1f))
+    }
+}
+
+private fun formatNumber(num: Int): String {
+    return if (num >= 1000) {
+        String.format("%,d", num).replace(",", " ")
+    } else {
+        num.toString()
     }
 }
 
 @Composable
 private fun StatChip(value: String, label: String, color: Color, modifier: Modifier) {
-    val numValue = value.toIntOrNull()
+    val numValue = value.replace(" ₽", "").replace(" ", "").toIntOrNull()
     val animated = if (numValue != null) animatedInt(numValue) else null
+    
     Card(
         modifier = modifier,
         colors   = CardDefaults.cardColors(
             containerColor = color.copy(alpha = 0.1f)),
         shape = MaterialTheme.shapes.medium
     ) {
-        Column(
-            Modifier.padding(vertical = 10.dp, horizontal = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp, horizontal = 4.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Text(animated?.toString() ?: value,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Black,
-                color = color)
-            Text(label,
-                style = MaterialTheme.typography.labelSmall,
-                color = color.copy(alpha = 0.7f),
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold)
+            val fontSize = when {
+                maxWidth < 60.dp -> 10.sp
+                maxWidth < 70.dp -> 11.sp
+                maxWidth < 80.dp -> 12.sp
+                else -> 13.sp
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    animated?.let { formatNumber(it) } ?: value,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = fontSize
+                    ),
+                    color = color,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 7.sp),
+                    color = color.copy(alpha = 0.7f),
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+// ── Сегодня ─────────────────────────────────────────────────
+@Composable
+private fun TodayCard(
+    dimens: ru.tabel.app.ui.theme.AdaptiveDimens,
+    todayShift: ShiftEntry?,
+    shiftTimes: List<ShiftTime>
+) {
+    val todayLabel = "${java.time.LocalDate.now().dayOfMonth} ${MONTHS_G[java.time.LocalDate.now().monthValue-1]}"
+    
+    val color = todayShift?.type?.semanticColor ?: MaterialTheme.colorScheme.surfaceVariant
+    
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp),
+        colors   = CardDefaults.cardColors(
+            containerColor = if (todayShift != null) color.copy(alpha = 0.12f) 
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+        shape    = MaterialTheme.shapes.extraLarge
+    ) {
+        Row(Modifier.padding(dimens.cardPadding), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("СЕГОДНЯ",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = dimens.labelFontSize),
+                    color = if (todayShift != null) color.copy(alpha = 0.7f) 
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    letterSpacing = 1.sp)
+                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(todayLabel,
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontSize = if (dimens.isCompact) 20.sp else 24.sp
+                        ),
+                        fontWeight = FontWeight.ExtraBold)
+                }
+                if (todayShift != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(
+                            Modifier.size(8.dp).clip(CircleShape).background(color)
+                        )
+                        Text(todayShift.type.label,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize),
+                            color = color,
+                            fontWeight = FontWeight.Medium)
+                    }
+                } else {
+                    Text("Нет смены",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Box(
+                Modifier.size(if (dimens.isCompact) 48.dp else 56.dp).clip(MaterialTheme.shapes.large)
+                    .background(if (todayShift != null) color.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    todayShift?.type?.icon ?: "—", 
+                    fontSize = if (dimens.isCompact) 22.sp else 26.sp
+                )
+            }
         }
     }
 }
 
 // ── Следующая смена ───────────────────────────────────────────
 @Composable
-private fun NextShiftCard(upcoming: List<ShiftEntry>, shiftTimes: List<ShiftTime>) {
+private fun NextShiftCard(
+    dimens: ru.tabel.app.ui.theme.AdaptiveDimens,
+    upcoming: List<ShiftEntry>, 
+    shiftTimes: List<ShiftTime>,
+    onClick: () -> Unit = {}
+) {
     val now by produceState(initialValue = java.time.LocalDateTime.now()) {
         while (true) {
             kotlinx.coroutines.delay(60_000L)
@@ -688,25 +701,30 @@ private fun NextShiftCard(upcoming: List<ShiftEntry>, shiftTimes: List<ShiftTime
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp)
+            .clickable(onClick = onClick),
         colors   = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.12f)),
         shape    = MaterialTheme.shapes.extraLarge
     ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(dimens.cardPadding), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("СЛЕДУЮЩАЯ СМЕНА",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = dimens.labelFontSize),
                     color = color.copy(alpha = 0.7f),
                     letterSpacing = 1.sp)
                 // Если "Сегодня"/"Завтра" — показываем и точную дату рядом
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(label,
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontSize = if (dimens.isCompact) 20.sp else 24.sp
+                        ),
                         fontWeight = FontWeight.ExtraBold)
                     if (next.date == today || next.date == tomorrow) {
                         Text(
                             "${date.dayOfMonth} ${MONTHS_G[date.monthValue-1]}",
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(bottom = 4.dp)
                         )
@@ -718,7 +736,7 @@ private fun NextShiftCard(upcoming: List<ShiftEntry>, shiftTimes: List<ShiftTime
                         Modifier.size(8.dp).clip(CircleShape).background(color)
                     )
                     Text(next.type.label,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize),
                         color = color,
                         fontWeight = FontWeight.Medium)
                 }
@@ -730,7 +748,7 @@ private fun NextShiftCard(upcoming: List<ShiftEntry>, shiftTimes: List<ShiftTime
                             modifier = Modifier.size(12.dp),
                             tint = color.copy(alpha = 0.8f))
                         Text(countdown,
-                            style = MaterialTheme.typography.labelMedium,
+                            style = MaterialTheme.typography.labelMedium.copy(fontSize = dimens.labelFontSize),
                             color = color.copy(alpha = 0.8f),
                             fontWeight = FontWeight.Bold)
                     }
@@ -738,11 +756,11 @@ private fun NextShiftCard(upcoming: List<ShiftEntry>, shiftTimes: List<ShiftTime
             }
             // Большой значок смены
             Box(
-                Modifier.size(56.dp).clip(MaterialTheme.shapes.large)
+                Modifier.size(if (dimens.isCompact) 48.dp else 56.dp).clip(MaterialTheme.shapes.large)
                     .background(color.copy(alpha = 0.2f)),
                 contentAlignment = Alignment.Center
             ) {
-                Text(next.type.icon, fontSize = 26.sp)
+                Text(next.type.icon, fontSize = if (dimens.isCompact) 22.sp else 26.sp)
             }
         }
     }
@@ -770,9 +788,10 @@ private fun DayCell(
         else                          -> Color.Transparent
     }
 
-    // Цвет числа
+    // Цвет числа — для светлых типов (золотой, пыльно-розовый) используем тёмный
     val numColor = when {
         !dayInfo.isCurrentMonth -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f)
+        typeColor != null && shift?.type in LIGHT_SHIFT_COLORS -> Color(0xFF1A1A1A)
         typeColor != null       -> Color.White
         selected                -> Color.White
         isToday                 -> MaterialTheme.colorScheme.primary
@@ -783,11 +802,25 @@ private fun DayCell(
     val animBg by animateColorAsState(bg, tween(180), label = "cellBg")
 
     val ringColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.95f)
-    val glowColor = MaterialTheme.colorScheme.primary
+    val glowColor = typeColor ?: MaterialTheme.colorScheme.primary
+
+    val dimens = rememberAdaptiveDimens()
+    val cellSize = dimens.calendarCellSize
+    val fontSize = when {
+        dimens.screenWidthDp < 320 -> 11.sp
+        dimens.screenWidthDp < 360 -> 12.sp
+        else -> 13.sp
+    }
+    val abbrFontSize = when {
+        dimens.screenWidthDp < 320 -> 6.sp
+        dimens.screenWidthDp < 360 -> 6.5.sp
+        else -> 7.sp
+    }
 
     // Внешний Box — квадратная ячейка сетки
     Box(
         modifier = Modifier
+            .size(cellSize)
             .aspectRatio(1f)
             .padding(2.dp)
             .combinedClickable(onClick = onTap, onLongClick = onLongPress),
@@ -841,7 +874,7 @@ private fun DayCell(
             Text(
                 shift.type.abbr,
                 modifier   = Modifier.align(Alignment.BottomCenter),
-                fontSize   = 7.sp,
+                fontSize   = abbrFontSize,
                 fontWeight = FontWeight.ExtraBold,
                 color      = typeColor?.copy(alpha = if (selected) 0.6f else 0.9f) ?: Color.Transparent,
                 letterSpacing = 0.sp
@@ -911,7 +944,10 @@ private fun LegendItem(type: ShiftType) {
 
 // ── Детали выбранного дня ─────────────────────────────────────
 @Composable
-private fun DayDetailCard(date: String, shift: ShiftEntry?, onEdit: () -> Unit) {
+private fun DayDetailCard(
+    dimens: ru.tabel.app.ui.theme.AdaptiveDimens = rememberAdaptiveDimens(),
+    date: String, shift: ShiftEntry?, onEdit: () -> Unit
+) {
     val dateObj = remember(date) {
         runCatching { LocalDate.parse(date) }.getOrNull()
     } ?: return
@@ -934,61 +970,251 @@ private fun DayDetailCard(date: String, shift: ShiftEntry?, onEdit: () -> Unit) 
 
         Card(
             modifier = Modifier.fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp),
+                .padding(horizontal = dimens.horizontalPadding, vertical = 4.dp),
             colors = CardDefaults.cardColors(
                 containerColor = animColor.copy(alpha = 0.08f)),
             shape = MaterialTheme.shapes.extraLarge
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 // Цветная полоса слева
-                Box(Modifier.width(4.dp).height(80.dp).background(animColor))
+                Box(Modifier.width(4.dp).height(if (dimens.isCompact) 64.dp else 80.dp).background(animColor))
 
                 // Иконка смены
                 if (shift != null) {
                     Box(
-                        Modifier.padding(start = 14.dp).size(44.dp)
+                        Modifier.padding(start = dimens.cardPadding).size(if (dimens.isCompact) 36.dp else 44.dp)
                             .clip(MaterialTheme.shapes.medium)
                             .background(animColor.copy(alpha = 0.15f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(shift.type.icon, fontSize = 20.sp)
+                        Text(shift.type.icon, fontSize = if (dimens.isCompact) 16.sp else 20.sp)
                     }
                 }
 
-                Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 14.dp)) {
+                Column(Modifier.weight(1f).padding(horizontal = dimens.cardPadding, vertical = 12.dp)) {
                     Text(
                         "${tDateObj.dayOfMonth} ${MONTHS_G[tDateObj.monthValue - 1]}",
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleMedium.copy(fontSize = dimens.titleFontSize),
                         fontWeight = FontWeight.Bold
                     )
                     if (shift != null) {
                         Text(shift.type.label,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize),
                             color = animColor,
                             fontWeight = FontWeight.Medium)
                         if (shift.note.isNotEmpty())
                             Text("📝 ${shift.note}",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = dimens.labelFontSize),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         Text("Нет смены",
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize),
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
                 FilledTonalButton(
                     onClick  = onEdit,
-                    modifier = Modifier.padding(end = 12.dp),
+                    modifier = Modifier.padding(end = dimens.cardPadding),
                     shape    = MaterialTheme.shapes.large,
                     colors   = ButtonDefaults.filledTonalButtonColors(
                         containerColor = animColor.copy(alpha = 0.15f),
                         contentColor   = animColor)
                 ) {
-                    Icon(Icons.Rounded.Edit, null, Modifier.size(14.dp))
+                    Icon(Icons.Rounded.Edit, null, Modifier.size(dimens.iconSizeSmall - 4.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Изменить", style = MaterialTheme.typography.labelMedium)
+                    Text("Изменить", style = MaterialTheme.typography.labelMedium.copy(fontSize = dimens.labelFontSize))
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SmartLegendFooter(
+    selectedDate: String?,
+    selectedShift: ShiftEntry?,
+    monthStats: MonthStats,
+    dimens: ru.tabel.app.ui.theme.AdaptiveDimens
+) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = dimens.horizontalPadding)
+    ) {
+        val availableHeight = maxHeight
+        
+        // Адаптивный показ: полная (>150dp), сокращённая (>80dp), скрытая (<80dp)
+        when {
+            availableHeight >= 150.dp -> {
+                // Полная версия: легенда + сводка дня
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Сводка дня
+                    selectedDate?.let { date ->
+                        val dateObj = try {
+                            java.time.LocalDate.parse(date)
+                        } catch (e: Exception) { null }
+                        if (dateObj != null) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                shape = MaterialTheme.shapes.medium
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            "${dateObj.dayOfMonth} ${MONTHS_G[dateObj.monthValue - 1]}",
+                                            style = MaterialTheme.typography.titleMedium.copy(fontSize = dimens.titleFontSize),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        if (selectedShift != null) {
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    selectedShift.type.icon,
+                                                    style = MaterialTheme.typography.bodyMedium
+                                                )
+                                                Text(
+                                                    selectedShift.type.label,
+                                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize),
+                                                    color = selectedShift.type.colorValue
+                                                )
+                                            }
+                                        } else {
+                                            Text(
+                                                "Нет смены",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(
+                                            "${monthStats.workShifts} смен",
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = dimens.bodyFontSize),
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            "${monthStats.totalHours.toInt()} ч",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Легенда цветов
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                        ),
+                        shape = MaterialTheme.shapes.medium
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "Цвета смен",
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontSize = dimens.labelFontSize,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                ShiftType.entries.take(4).forEach { type ->
+                                    LegendChip(type = type, modifier = Modifier.weight(1f))
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                ShiftType.entries.drop(4).forEach { type ->
+                                    LegendChip(type = type, modifier = Modifier.weight(1f))
+                                }
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+            availableHeight >= 80.dp -> {
+                // Сокращённая версия: только легенда
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    ),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ShiftType.entries.forEach { type ->
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(type.colorValue)
+                                )
+                                Text(
+                                    "${type.icon} ${type.label}",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            // < 80dp — скрыть легенду
+        }
+    }
+}
+
+@Composable
+private fun LegendChip(type: ShiftType, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(type.colorValue)
+        )
+        Text(
+            "${type.icon} ${type.label}",
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1
+        )
     }
 }

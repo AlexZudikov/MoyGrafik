@@ -1,11 +1,14 @@
 package ru.tabel.app.data.repository
 
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import ru.tabel.app.data.db.*
 import ru.tabel.app.data.model.*
 import java.time.LocalDate
-import java.time.DayOfWeek
+import java.time.YearMonth
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -14,14 +17,15 @@ class TabelRepository @Inject constructor(
     val shiftDao: ShiftDao,
     val profileDao: ProfileDao,
     val shiftTimeDao: ShiftTimeDao,
-    val settingsDao: SettingsDao
+    val settingsDao: SettingsDao,
+    val shiftTemplateDao: ShiftTemplateDao
 ) {
-    // ── Настройки ──────────────────────────────────────────────
+    private val gson = Gson()
+
     val settings: Flow<AppSettings> = settingsDao.getSettings().map { it ?: AppSettings() }
 
     suspend fun saveSettings(s: AppSettings) = settingsDao.saveSettings(s)
 
-    // ── Профили ────────────────────────────────────────────────
     val allProfiles: Flow<List<Profile>> = profileDao.getAllProfiles()
     val activeProfile: Flow<Profile?>    = profileDao.getActiveProfile()
 
@@ -39,6 +43,7 @@ class TabelRepository @Inject constructor(
 
     suspend fun deleteProfile(profile: Profile) {
         shiftDao.deleteAllShiftsForProfile(profile.id)
+        shiftTemplateDao.deleteCustomTemplates(profile.id)
         profileDao.deleteProfile(profile)
     }
 
@@ -46,7 +51,6 @@ class TabelRepository @Inject constructor(
         profileDao.insertProfile(Profile(id = "default", name = "Основной", isActive = true))
     }
 
-    // ── Смены ──────────────────────────────────────────────────
     fun getAllShiftsForProfile(profileId: String): Flow<List<ShiftEntry>> =
         shiftDao.getShiftsForProfile(profileId)
 
@@ -61,7 +65,18 @@ class TabelRepository @Inject constructor(
     suspend fun saveShift(shift: ShiftEntry) = shiftDao.insertShift(shift)
     suspend fun deleteShift(shift: ShiftEntry) = shiftDao.deleteShift(shift)
 
-    // Автозаполнение — один батч INSERT вместо N одиночных
+    suspend fun clearMonth(profileId: String, year: Int, month: Int) {
+        shiftDao.deleteShiftsForMonth(profileId, "%04d-%02d".format(year, month))
+    }
+
+    suspend fun clearYear(profileId: String, year: Int) {
+        shiftDao.deleteShiftsForYear(profileId, "%04d".format(year))
+    }
+
+    suspend fun restoreShifts(shifts: List<ShiftEntry>) {
+        shiftDao.insertShifts(shifts)
+    }
+
     suspend fun autofillMonth(
         profileId: String, year: Int, month: Int,
         pattern: List<ShiftType>, startDay: Int = 1, startIndex: Int = 0
@@ -81,7 +96,104 @@ class TabelRepository @Inject constructor(
         shiftDao.insertShifts(shifts)
     }
 
-    // ── Время смен ─────────────────────────────────────────────
+    // ── Шаблоны смен ──────────────────────────────────────────
+    fun getTemplatesForProfile(profileId: String): Flow<List<ShiftTemplate>> =
+        shiftTemplateDao.getTemplatesForProfile(profileId)
+
+    suspend fun getTemplateById(id: String): ShiftTemplate? =
+        shiftTemplateDao.getTemplateById(id)
+
+    suspend fun saveTemplate(template: ShiftTemplate) =
+        shiftTemplateDao.insertTemplate(template)
+
+    suspend fun deleteTemplate(template: ShiftTemplate) =
+        shiftTemplateDao.deleteTemplate(template)
+
+    suspend fun initDefaultTemplates(profileId: String) {
+        val existing = shiftTemplateDao.getTemplatesForProfile(profileId).first()
+        if (existing.isEmpty()) {
+            shiftTemplateDao.insertTemplates(
+                DefaultTemplates.templates.map { it.copy(profileId = profileId) }
+            )
+        }
+    }
+
+    data class PatternDay(val day: Int, val type: String)
+
+    fun parseTemplatePattern(pattern: String): List<ShiftType> {
+        return try {
+            val type = object : TypeToken<List<PatternDay>>() {}.type
+            val days: List<PatternDay> = gson.fromJson(pattern, type)
+            days.mapNotNull { d ->
+                runCatching { ShiftType.valueOf(d.type) }.getOrNull()
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    suspend fun applyTemplate(
+        profileId: String,
+        template: ShiftTemplate,
+        year: Int,
+        month: Int,
+        startDay: Int = 1
+    ) {
+        val pattern = parseTemplatePattern(template.pattern)
+        if (pattern.isEmpty()) return
+
+        val daysInMonth = LocalDate.of(year, month, 1).lengthOfMonth()
+        val shifts = ArrayList<ShiftEntry>()
+        var patternIndex = 0
+
+        for (day in startDay..daysInMonth) {
+            shifts.add(ShiftEntry(
+                date = "%04d-%02d-%02d".format(year, month, day),
+                profileId = profileId,
+                type = pattern[patternIndex % pattern.size]
+            ))
+            patternIndex++
+        }
+
+        shiftDao.deleteShiftsForMonth(profileId, "%04d-%02d".format(year, month))
+        shiftDao.insertShifts(shifts)
+    }
+
+    suspend fun applyTemplateToYear(
+        profileId: String,
+        template: ShiftTemplate,
+        startYear: Int,
+        startMonth: Int,
+        startDay: Int = 1
+    ) {
+        val pattern = parseTemplatePattern(template.pattern)
+        if (pattern.isEmpty()) return
+
+        var current = LocalDate.of(startYear, startMonth, startDay)
+        val endDate = LocalDate.of(startYear, 12, 31)
+        var patternIndex = 0
+
+        while (!current.isAfter(endDate)) {
+            val ym = YearMonth.of(current.year, current.month)
+            val startDayOfMonth = if (current.year == startYear && current.monthValue == startMonth) current.dayOfMonth else 1
+            val daysInMonth = ym.lengthOfMonth()
+            val shifts = ArrayList<ShiftEntry>()
+
+            for (day in startDayOfMonth..daysInMonth) {
+                shifts.add(ShiftEntry(
+                    date = "%04d-%02d-%02d".format(ym.year, ym.monthValue, day),
+                    profileId = profileId,
+                    type = pattern[patternIndex % pattern.size]
+                ))
+                patternIndex++
+            }
+
+            shiftDao.deleteShiftsForMonth(profileId, "%04d-%02d".format(ym.year, ym.monthValue))
+            shiftDao.insertShifts(shifts)
+            current = ym.plusMonths(1).atDay(1)
+        }
+    }
+
     val allShiftTimes: Flow<List<ShiftTime>> = shiftTimeDao.getAllTimes()
 
     suspend fun saveShiftTime(time: ShiftTime) = shiftTimeDao.insertTime(time)
@@ -95,7 +207,6 @@ class TabelRepository @Inject constructor(
         ))
     }
 
-    // ── Статистика ─────────────────────────────────────────────
     fun getMonthStats(shifts: List<ShiftEntry>, times: List<ShiftTime>, s: AppSettings): MonthStats {
         val timeMap   = times.associateBy { it.type }
         var workHours = 0f
@@ -109,9 +220,8 @@ class TabelRepository @Inject constructor(
                 ShiftType.OFF, ShiftType.VACATION, ShiftType.SICK -> off++
             }
         }
-        // Норма рабочих часов — считаем по рабочим дням месяца (пн-пт * 8ч)
         val normHours = if (shifts.isNotEmpty()) {
-            val dateStr = shifts.first().date          // "2025-03-01"
+            val dateStr = shifts.first().date
             val ym = runCatching {
                 java.time.YearMonth.parse(dateStr.substring(0, 7))
             }.getOrNull()
@@ -140,14 +250,13 @@ class TabelRepository @Inject constructor(
     }
 
     private fun calcHours(e: ShiftEntry, timeMap: Map<ShiftType, ShiftTime>, breakMinutes: Int = 0): Float {
-        // Значения по умолчанию для каждого типа если в БД нет настроек
         val defaultStart = when (e.type) {
             ShiftType.DAY     -> "08:00"
             ShiftType.NIGHT   -> "20:00"
             ShiftType.SLEEP   -> "08:00"
             ShiftType.HOLIDAY -> "08:00"
             ShiftType.SICK    -> "08:00"
-            else              -> return 0f   // OFF, VACATION — 0 рабочих часов
+            else              -> return 0f
         }
         val defaultEnd = when (e.type) {
             ShiftType.DAY     -> "20:00"
@@ -164,7 +273,6 @@ class TabelRepository @Inject constructor(
         val (eh, em) = en.split(":").map { it.toInt() }
         var diff = (eh * 60 + em) - (sh * 60 + sm)
         if (diff <= 0) diff += 1440
-        // Вычитаем перерыв/обед
         diff = (diff - breakMinutes).coerceAtLeast(0)
         return diff / 60f
     }

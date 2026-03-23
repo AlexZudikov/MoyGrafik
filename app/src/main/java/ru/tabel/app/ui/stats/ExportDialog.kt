@@ -2,6 +2,7 @@ package ru.tabel.app.ui.stats
 
 import android.content.Context
 import android.content.Intent
+import android.provider.CalendarContract
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
@@ -109,6 +110,10 @@ fun ExportDialog(
                         selectedFormat == ExportFormat.Text, Modifier.weight(1f),
                         { haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                           selectedFormat = ExportFormat.Text })
+                    FormatChip("📅", Icons.Rounded.CalendarMonth, Color(0xFF8B5CF6),
+                        selectedFormat == ExportFormat.Calendar, Modifier.weight(1f),
+                        { haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                          selectedFormat = ExportFormat.Calendar })
                 }
 
                 // Инфо о количестве смен
@@ -167,6 +172,20 @@ fun ExportDialog(
                                     )
                                 }
                             }
+                            ExportFormat.Calendar -> {
+                                if (shifts.isEmpty()) {
+                                    Toast.makeText(context, "Нет смен для экспорта", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val hasPermission = android.Manifest.permission.WRITE_CALENDAR.let {
+                                        context.checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                    }
+                                    if (!hasPermission) {
+                                        Toast.makeText(context, "Разрешите доступ к календарю в настройках приложения", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        exportToCalendar(context, shifts, profileName)
+                                    }
+                                }
+                            }
                         }
                         isExporting = false
                         onDismiss()
@@ -197,7 +216,7 @@ fun ExportDialog(
 
 // ── Вспомогалки ───────────────────────────────────────────────
 enum class ExportPeriod { CurrentMonth, Last3Months, Last6Months, FullYear }
-enum class ExportFormat  { PDF, Text }
+enum class ExportFormat  { PDF, Text, Calendar }
 
 private fun filterShifts(shifts: List<ShiftEntry>, period: ExportPeriod): List<ShiftEntry> {
     val now = YearMonth.now()
@@ -314,5 +333,87 @@ private fun FormatChip(
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
                 color = if (selected) color else MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+private fun exportToCalendar(context: Context, shifts: List<ShiftEntry>, profileName: String) {
+    try {
+        val events = shifts.mapNotNull { shift ->
+            try {
+                val dateParts = shift.date.split("-")
+                val year = dateParts[0].toInt()
+                val month = dateParts[1].toInt()
+                val day = dateParts[2].toInt()
+                
+                val startTime = shift.customStartTime ?: when (shift.type) {
+                    ru.tabel.app.data.model.ShiftType.DAY, ru.tabel.app.data.model.ShiftType.HOLIDAY -> "08:00"
+                    ru.tabel.app.data.model.ShiftType.NIGHT -> "20:00"
+                    else -> "09:00"
+                }
+                val endTime = shift.customEndTime ?: when (shift.type) {
+                    ru.tabel.app.data.model.ShiftType.DAY, ru.tabel.app.data.model.ShiftType.HOLIDAY -> "20:00"
+                    ru.tabel.app.data.model.ShiftType.NIGHT -> "08:00"
+                    else -> "18:00"
+                }
+                
+                val (startHour, startMin) = startTime.split(":").map { it.toIntOrNull() ?: 0 }
+                val (endHour, endMin) = endTime.split(":").map { it.toIntOrNull() ?: 0 }
+                
+                val startMillis = java.util.Calendar.getInstance().apply {
+                    set(year, month - 1, day, startHour, startMin, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                
+                val endMillis = java.util.Calendar.getInstance().apply {
+                    set(year, month - 1, day, endHour, endMin, 0)
+                    set(java.util.Calendar.MILLISECOND, 0)
+                }.timeInMillis
+                
+                android.content.ContentValues().apply {
+                    put(android.provider.CalendarContract.Events.TITLE, "${shift.type.icon} ${shift.type.label}")
+                    put(android.provider.CalendarContract.Events.DESCRIPTION, buildString {
+                        appendLine("Профиль: $profileName")
+                        if (shift.note.isNotEmpty()) {
+                            appendLine("Заметка: ${shift.note}")
+                        }
+                        appendLine()
+                        appendLine("Время: $startTime — $endTime")
+                    }.trimEnd())
+                    put(android.provider.CalendarContract.Events.EVENT_LOCATION, "Работа")
+                    put(android.provider.CalendarContract.Events.DTSTART, startMillis)
+                    put(android.provider.CalendarContract.Events.DTEND, endMillis)
+                    put(android.provider.CalendarContract.Events.AVAILABILITY, android.provider.CalendarContract.Events.AVAILABILITY_BUSY)
+                    put(android.provider.CalendarContract.Events.CALENDAR_ID, 1)
+                    put(android.provider.CalendarContract.Events.EVENT_TIMEZONE, java.util.TimeZone.getDefault().id)
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+        
+        if (events.isEmpty()) {
+            Toast.makeText(context, "Нет смен для экспорта", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        val contentResolver = context.contentResolver
+        var addedCount = 0
+        events.forEach { values ->
+            try {
+                val uri = contentResolver.insert(android.provider.CalendarContract.Events.CONTENT_URI, values)
+                if (uri != null) addedCount++
+            } catch (e: Exception) {
+                // Skip this event
+            }
+        }
+        
+        Toast.makeText(
+            context,
+            if (addedCount > 0) "Добавлено $addedCount событий в календарь" else "Ошибка: проверьте разрешения календаря",
+            Toast.LENGTH_LONG
+        ).show()
+        
+    } catch (e: Exception) {
+        Toast.makeText(context, "Ошибка экспорта: ${e.message}", Toast.LENGTH_LONG).show()
     }
 }

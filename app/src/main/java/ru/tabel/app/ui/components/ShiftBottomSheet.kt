@@ -23,6 +23,7 @@ import ru.tabel.app.data.model.ShiftEntry
 import ru.tabel.app.data.model.ShiftType
 import ru.tabel.app.ui.theme.pressScale
 import ru.tabel.app.ui.theme.staggerDelay
+import ru.tabel.app.ui.theme.rememberAdaptiveDimens
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,7 +32,7 @@ fun ShiftBottomSheet(
     currentShift: ShiftEntry?,
     defaultStartTime: String = "08:00",
     defaultEndTime: String   = "20:00",
-    onSave: (ShiftType?, String, String?, String?) -> Unit,
+    onSave: (ShiftType?, String, String?, String?, Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -40,9 +41,8 @@ fun ShiftBottomSheet(
     var customStart     by remember { mutableStateOf(currentShift?.customStartTime ?: "") }
     var customEnd       by remember { mutableStateOf(currentShift?.customEndTime ?: "") }
     var showTimeEditor  by remember { mutableStateOf(false) }
-
-    // Кнопка сохранения заметки — активна всегда когда есть смена ИЛИ текст заметки
-    val canSaveNote = selectedType != null || note.isNotBlank()
+    var isLocked        by remember { mutableStateOf(currentShift?.locked ?: false) }
+    val dimens          = rememberAdaptiveDimens()
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -60,21 +60,66 @@ fun ShiftBottomSheet(
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = if (dimens.isCompact) 16.dp else 20.dp)
                 .padding(bottom = 32.dp)
         ) {
-            Text(
-                "Смена — ${formatSheetDate(date)}",
-                style      = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Black,
-                modifier   = Modifier.padding(bottom = 4.dp)
-            )
-            Text(
-                "Нажми на тип — сразу сохранится",
-                style    = MaterialTheme.typography.labelSmall,
-                color    = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Смена — ${formatSheetDate(date)}",
+                    style      = MaterialTheme.typography.titleLarge.copy(fontSize = dimens.titleFontSize),
+                    fontWeight = FontWeight.Black,
+                    modifier   = Modifier.padding(bottom = 4.dp)
+                )
+                if (currentShift != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .clip(MaterialTheme.shapes.large)
+                            .background(
+                                if (isLocked) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                                else MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            .clickable {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                isLocked = !isLocked
+                                onSave(selectedType, note.trim(), customStart.toValidTime(), customEnd.toValidTime(), isLocked)
+                            }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Icon(
+                            if (isLocked) Icons.Rounded.Lock else Icons.Rounded.LockOpen,
+                            null,
+                            modifier = Modifier.size(18.dp),
+                            tint = if (isLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            if (isLocked) "Заблокировано" else "Разблокировано",
+                            style = MaterialTheme.typography.labelMedium.copy(fontSize = dimens.labelFontSize),
+                            color = if (isLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            if (isLocked) {
+                Text(
+                    "Время и тип смены защищены от изменений",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = dimens.labelFontSize),
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = dimens.cardPadding)
+                )
+            } else {
+                Text(
+                    "Нажми на тип — сразу сохранится",
+                    style    = MaterialTheme.typography.labelSmall.copy(fontSize = dimens.labelFontSize),
+                    color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = dimens.cardPadding)
+                )
+            }
 
             // Заметка — доступна только если выбран тип смены
             val hasShift = selectedType != null
@@ -130,7 +175,7 @@ fun ShiftBottomSheet(
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             val start = customStart.toValidTime()
                             val end   = customEnd.toValidTime()
-                            onSave(selectedType, note, start, end)
+                            onSave(selectedType, note, start, end, isLocked)
                         },
                         modifier = Modifier.fillMaxWidth(),
                         shape    = MaterialTheme.shapes.large
@@ -147,62 +192,83 @@ fun ShiftBottomSheet(
 
             Spacer(Modifier.height(12.dp))
 
-            // Кастомное время — разворачивается по тапу
+            // ── Время смены — компактная строка ────────────────
             AnimatedVisibility(
                 visible = selectedType?.hasTime == true || showTimeEditor
             ) {
+                val workMinutes = calculateWorkMinutes(
+                    customStart.ifEmpty { defaultStartTime },
+                    customEnd.ifEmpty { defaultEndTime }
+                )
+                
                 Column {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(MaterialTheme.shapes.large)
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable { showTimeEditor = !showTimeEditor }
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                            .background(
+                                if (isLocked) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                                else MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment     = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Rounded.Schedule, null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp))
-                        val startLabel = customStart.ifEmpty { defaultStartTime }
-                        val endLabel   = customEnd.ifEmpty { defaultEndTime }
-                        Text(
-                            "Время: $startLabel — $endLabel",
-                            style    = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Icon(
-                            if (showTimeEditor) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                            null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    AnimatedVisibility(visible = showTimeEditor) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            TimeTextField(
-                                value         = customStart,
-                                placeholder   = defaultStartTime,
-                                label         = "Начало",
+                        if (isLocked) {
+                            Icon(
+                                Icons.Rounded.Lock,
+                                null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(18.dp))
+                            Text(
+                                "Время заблокировано",
+                                style    = MaterialTheme.typography.bodyMedium,
+                                color    = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.weight(1f)
+                            )
+                        } else {
+                            // Начало
+                            CompactTimeField(
+                                value       = customStart,
+                                placeholder = defaultStartTime,
+                                label       = "Нач.",
                                 onValueChange = { customStart = it },
-                                modifier      = Modifier.weight(1f)
+                                modifier    = Modifier.weight(1f)
                             )
-                            TimeTextField(
-                                value         = customEnd,
-                                placeholder   = defaultEndTime,
-                                label         = "Конец",
+                            
+                            Text("—", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            
+                            // Конец
+                            CompactTimeField(
+                                value       = customEnd,
+                                placeholder = defaultEndTime,
+                                label       = "Кон.",
                                 onValueChange = { customEnd = it },
-                                modifier      = Modifier.weight(1f)
+                                modifier    = Modifier.weight(1f)
                             )
+                            
+                            Spacer(Modifier.width(4.dp))
+                            
+                            // Чистое время
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    "${workMinutes / 60}ч ${workMinutes % 60}м",
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = if (workMinutes > 0) MaterialTheme.colorScheme.primary 
+                                           else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    "чистое",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
-
-                    Spacer(Modifier.height(12.dp))
+                    
+                    Spacer(Modifier.height(8.dp))
                 }
             }
 
@@ -214,10 +280,10 @@ fun ShiftBottomSheet(
             )
 
             LazyVerticalGrid(
-                columns               = GridCells.Fixed(2),
+                columns               = GridCells.Fixed(dimens.gridColumns),
                 verticalArrangement   = Arrangement.spacedBy(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier              = Modifier.height(280.dp)
+                modifier              = Modifier.heightIn(max = if (dimens.isCompact) 240.dp else 280.dp)
             ) {
                 items(ShiftType.entries.size) { idx ->
                     val type    = ShiftType.entries[idx]
@@ -232,15 +298,19 @@ fun ShiftBottomSheet(
                         AnimatedShiftTypeCard(
                             type       = type,
                             isSelected = selectedType == type,
+                            locked     = isLocked,
                             onClick    = {
+                                if (isLocked) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    return@AnimatedShiftTypeCard
+                                }
                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                 val newType = if (selectedType == type) null else type
                                 selectedType = newType
                                 if (newType?.hasTime == true) showTimeEditor = true
-                                // Сохраняем тип ВМЕСТЕ с текущей заметкой
                                 val start = customStart.toValidTime()
                                 val end   = customEnd.toValidTime()
-                                onSave(newType, note.trim(), start, end)
+                                onSave(newType, note.trim(), start, end, isLocked)
                             }
                         )
                     }
@@ -253,7 +323,7 @@ fun ShiftBottomSheet(
                 OutlinedButton(
                     onClick  = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onSave(null, "", null, null)
+                        onSave(null, "", null, null, isLocked)
                     },
                     modifier = Modifier.fillMaxWidth(),
                     colors   = ButtonDefaults.outlinedButtonColors(
@@ -265,8 +335,8 @@ fun ShiftBottomSheet(
                     Spacer(Modifier.width(6.dp))
                     Text("Удалить смену")
                 }
-            }
         }
+    }
     }
 }
 
@@ -276,8 +346,28 @@ private fun String.toValidTime(): String? {
     return if (matches(Regex("^([01]\\d|2[0-3]):[0-5]\\d$"))) this else null
 }
 
+// Расчёт чистого рабочего времени в минутах
+private fun calculateWorkMinutes(start: String, end: String): Int {
+    try {
+        val (sh, sm) = start.split(":").map { it.toIntOrNull() ?: 0 }
+        val (eh, em) = end.split(":").map { it.toIntOrNull() ?: 0 }
+        
+        var startMinutes = sh * 60 + sm
+        var endMinutes = eh * 60 + em
+        
+        // Ночная смена — переход через полночь
+        if (endMinutes <= startMinutes) {
+            endMinutes += 24 * 60
+        }
+        
+        return (endMinutes - startMinutes).coerceAtLeast(0)
+    } catch (e: Exception) {
+        return 0
+    }
+}
+
 @Composable
-private fun TimeTextField(
+private fun CompactTimeField(
     value: String,
     placeholder: String,
     label: String,
@@ -287,19 +377,18 @@ private fun TimeTextField(
     OutlinedTextField(
         value         = value,
         onValueChange = { new ->
-            // автоформат: вставляем ':' после 2 цифр
             val digits = new.filter { it.isDigit() }.take(4)
             onValueChange(when {
                 digits.length >= 3 -> digits.substring(0, 2) + ":" + digits.substring(2)
                 else               -> digits
             })
         },
-        label         = { Text(label) },
-        placeholder   = { Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-        modifier      = modifier,
-        shape         = MaterialTheme.shapes.large,
+        label         = { Text(label, style = MaterialTheme.typography.labelSmall) },
+        placeholder   = { Text(placeholder, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall) },
+        modifier      = modifier.height(56.dp),
+        shape         = MaterialTheme.shapes.medium,
         singleLine    = true,
-        leadingIcon   = { Icon(Icons.Rounded.Schedule, null, Modifier.size(16.dp)) },
+        textStyle     = MaterialTheme.typography.bodyMedium.copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
             keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
         )
@@ -307,7 +396,7 @@ private fun TimeTextField(
 }
 
 @Composable
-private fun AnimatedShiftTypeCard(type: ShiftType, isSelected: Boolean, onClick: () -> Unit) {
+private fun AnimatedShiftTypeCard(type: ShiftType, isSelected: Boolean, locked: Boolean, onClick: () -> Unit) {
     val typeColor = Color(type.color)
 
     val scale by animateFloatAsState(
@@ -334,10 +423,10 @@ private fun AnimatedShiftTypeCard(type: ShiftType, isSelected: Boolean, onClick:
             .clip(MaterialTheme.shapes.large)
             .background(bg)
             .border(2.dp, border, MaterialTheme.shapes.large)
-            .pressScale(onClick = onClick)
+            .pressScale(onClick = if (locked) {{}} else onClick)
             .padding(14.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text(type.icon, style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.width(10.dp))
             Text(
@@ -345,8 +434,17 @@ private fun AnimatedShiftTypeCard(type: ShiftType, isSelected: Boolean, onClick:
                 style      = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Bold,
                 color      = if (isSelected) typeColor
-                             else MaterialTheme.colorScheme.onSurface
+                             else MaterialTheme.colorScheme.onSurface,
+                modifier   = Modifier.weight(1f)
             )
+            if (locked && isSelected) {
+                Icon(
+                    Icons.Rounded.Lock,
+                    "Заблокировано",
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
         }
     }
 }

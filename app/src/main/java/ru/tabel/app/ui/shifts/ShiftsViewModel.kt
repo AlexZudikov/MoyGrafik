@@ -11,6 +11,7 @@ import ru.tabel.app.data.model.*
 import ru.tabel.app.data.repository.TabelRepository
 import ru.tabel.app.notifications.TabelNotificationManager
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import javax.inject.Inject
 
@@ -35,35 +36,55 @@ class ShiftsViewModel @Inject constructor(
     private val activeProfile = repo.activeProfile
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
+    // Текущий выбранный месяц
+    private val _currentMonth = MutableStateFlow(YearMonth.now())
+    val currentMonth: StateFlow<YearMonth> = _currentMonth.asStateFlow()
+
+    fun previousMonth() { _currentMonth.update { it.minusMonths(1) } }
+    fun nextMonth()     { _currentMonth.update { it.plusMonths(1) } }
+    fun goToCurrentMonth() { _currentMonth.value = YearMonth.now() }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     private val allShifts: StateFlow<List<ShiftEntry>> = activeProfile
         .flatMapLatest { p ->
             if (p == null) flowOf(emptyList())
-            else repo.getAllShiftsForProfile(p.id)   // все смены: и прошлые, и будущие
+            else repo.getAllShiftsForProfile(p.id)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Фильтрованные смены по месяцу, поиску и типу
     @OptIn(FlowPreview::class)
     val filteredShifts: StateFlow<List<ShiftEntry>> = combine(
-        allShifts, _searchQuery.debounce(150), _activeFilter, _sortDesc
-    ) { shifts, query, filter, desc ->
+        allShifts,
+        _searchQuery.debounce(150),
+        _activeFilter,
+        _sortDesc,
+        currentMonth
+    ) { shifts, query, filter, desc, month ->
+        val monthPrefix = "%04d-%02d".format(month.year, month.monthValue)
         shifts
             .filter { entry ->
-                val matchType  = filter == null || entry.type == filter
-                val matchQuery = query.isBlank() ||
+                entry.date.startsWith(monthPrefix) &&
+                (filter == null || entry.type == filter) &&
+                (query.isBlank() ||
                     entry.type.label.contains(query, ignoreCase = true) ||
                     entry.date.contains(query) ||
                     entry.note.contains(query, ignoreCase = true) ||
-                    formatDateForSearch(entry.date).contains(query, ignoreCase = true)
-                matchType && matchQuery
+                    formatDateForSearch(entry.date).contains(query, ignoreCase = true))
             }
             .let { if (desc) it.sortedByDescending { e -> e.date } else it.sortedBy { e -> e.date } }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val filterStats: StateFlow<Map<ShiftType?, Int>> = allShifts.map { shifts ->
+    // Статистика по текущему месяцу
+    val filterStats: StateFlow<Map<ShiftType?, Int>> = combine(
+        allShifts,
+        currentMonth
+    ) { shifts, month ->
+        val monthPrefix = "%04d-%02d".format(month.year, month.monthValue)
+        val monthShifts = shifts.filter { it.date.startsWith(monthPrefix) }
         buildMap {
-            put(null, shifts.size)
-            ShiftType.entries.forEach { t -> put(t, shifts.count { it.type == t }) }
+            put(null, monthShifts.size)
+            ShiftType.entries.forEach { t -> put(t, monthShifts.count { it.type == t }) }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
 
@@ -76,7 +97,8 @@ class ShiftsViewModel @Inject constructor(
 
     // Редактирование смены прямо из вкладки «Смены»
     fun saveShift(date: String, type: ShiftType?, note: String,
-                  customStart: String? = null, customEnd: String? = null) {
+                  customStart: String? = null, customEnd: String? = null,
+                  locked: Boolean = false) {
         val profileId = activeProfile.value?.id ?: return
         viewModelScope.launch {
             if (type == null) {
@@ -89,7 +111,8 @@ class ShiftsViewModel @Inject constructor(
                     type            = type,
                     note            = note,
                     customStartTime = customStart,
-                    customEndTime   = customEnd
+                    customEndTime   = customEnd,
+                    locked          = locked
                 ))
             }
             rescheduleNotifications()

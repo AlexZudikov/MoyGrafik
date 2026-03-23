@@ -1,10 +1,13 @@
 package ru.tabel.app
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import ru.tabel.app.backup.AutoBackupWorker
 import ru.tabel.app.data.model.*
 import ru.tabel.app.data.repository.TabelRepository
 import ru.tabel.app.notifications.TabelNotificationManager
@@ -15,8 +18,11 @@ import javax.inject.Inject
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val repo: TabelRepository,
-    val notifManager: TabelNotificationManager   // public — используется в NotifSheet
+    val notifManager: TabelNotificationManager,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
+
+    val repository: TabelRepository get() = repo
 
     val settings: StateFlow<AppSettings> = repo.settings
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
@@ -32,7 +38,6 @@ class SettingsViewModel @Inject constructor(
         repo.saveSettings(settings.value.copy(fontScale = scale))
     }
 
-    // БАГ 3 FIXED: sickCoeff теперь сохраняется
     fun saveWageSettings(
         rate: Float, nightCoeff: Float, holidayCoeff: Float, sickCoeff: Float = 0.6f
     ) = viewModelScope.launch {
@@ -44,7 +49,6 @@ class SettingsViewModel @Inject constructor(
         ))
     }
 
-    // БАГ 2 FIXED: после сохранения настроек — перепланируем уведомления
     fun saveNotifSettings(hoursBefore: Int, sound: String) =
         viewModelScope.launch {
             val newSettings = settings.value.copy(
@@ -52,17 +56,25 @@ class SettingsViewModel @Inject constructor(
                 notifSound       = sound
             )
             repo.saveSettings(newSettings)
+            notifManager.updateChannelSound(sound)
             rescheduleNotifications(newSettings)
         }
 
     fun saveShiftTime(type: ShiftType, start: String, end: String) = viewModelScope.launch {
         repo.saveShiftTime(ShiftTime(type = type, startTime = start, endTime = end))
-        // Время смен изменилось — перепланируем уведомления
         rescheduleNotifications(settings.value)
     }
 
     fun setDynamicColor(enabled: Boolean) = viewModelScope.launch {
         repo.saveSettings(settings.value.copy(dynamicColor = enabled))
+    }
+
+    fun setFontLocked(locked: Boolean) = viewModelScope.launch {
+        repo.saveSettings(settings.value.copy(fontLocked = locked))
+    }
+
+    fun setIsLocked(locked: Boolean) = viewModelScope.launch {
+        repo.saveSettings(settings.value.copy(isLocked = locked))
     }
 
     fun setBreakMinutes(minutes: Int) = viewModelScope.launch {
@@ -73,7 +85,64 @@ class SettingsViewModel @Inject constructor(
         repo.saveSettings(settings.value.copy(cloudBackupEnabled = enabled, cloudBackupUri = uri))
     }
 
-    // БАГ 1 FIXED: читаем данные из repo напрямую, не из StateFlow
+    fun setAutoBackup(enabled: Boolean, frequencyDays: Int = 7) = viewModelScope.launch {
+        repo.saveSettings(settings.value.copy(
+            autoBackupEnabled = enabled,
+            autoBackupFrequency = frequencyDays
+        ))
+        
+        if (enabled) {
+            AutoBackupWorker.schedule(context, frequencyDays)
+        } else {
+            AutoBackupWorker.cancel(context)
+        }
+    }
+
+    fun applyTemplate(template: ShiftTemplate, year: Int, month: Int, startDay: Int = 1) {
+        viewModelScope.launch {
+            val profileId = repo.activeProfile.first()?.id ?: return@launch
+            repo.applyTemplate(profileId, template, year, month, startDay)
+            rescheduleNotifications(settings.value)
+        }
+    }
+
+    fun applyTemplateToYear(template: ShiftTemplate, year: Int, month: Int, startDay: Int = 1) {
+        viewModelScope.launch {
+            val profileId = repo.activeProfile.first()?.id ?: return@launch
+            repo.applyTemplateToYear(profileId, template, year, month, startDay)
+            rescheduleNotifications(settings.value)
+        }
+    }
+
+    fun clearMonth(year: Int, month: Int) {
+        viewModelScope.launch {
+            val profileId = repo.activeProfile.first()?.id ?: return@launch
+            repo.clearMonth(profileId, year, month)
+            rescheduleNotifications(settings.value)
+        }
+    }
+
+    fun clearYear(year: Int) {
+        viewModelScope.launch {
+            val profileId = repo.activeProfile.first()?.id ?: return@launch
+            repo.clearYear(profileId, year)
+            rescheduleNotifications(settings.value)
+        }
+    }
+
+    fun restoreShifts(shifts: List<ShiftEntry>) {
+        viewModelScope.launch {
+            repo.restoreShifts(shifts)
+            rescheduleNotifications(settings.value)
+        }
+    }
+
+    fun restoreTimes(times: List<ShiftTime>) {
+        viewModelScope.launch {
+            repo.shiftTimeDao.insertTimes(times)
+        }
+    }
+
     private suspend fun rescheduleNotifications(s: AppSettings) {
         runCatching {
             val times   = shiftTimes.value.associateBy { it.type }

@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.VibrationEffect
@@ -31,7 +32,6 @@ import javax.inject.Singleton
 const val CHANNEL_ID   = "tabel_shifts"
 const val CHANNEL_NAME = "Смены"
 
-// Диапазон ID для алармов — не пересекается с другими уведомлениями
 private const val ALARM_ID_START = 1000
 private const val ALARM_ID_END   = 1300
 
@@ -40,45 +40,47 @@ class TabelNotificationManager @Inject constructor(
     private val context: Context
 ) {
     private var mediaPlayer: MediaPlayer? = null
+    private var currentSound: String = "default"
 
-    init { createChannel() }
+    init { createChannel("default") }
 
-    // ── Канал ─────────────────────────────────────────────────
-    private fun createChannel() {
+    fun updateChannelSound(soundUri: String) {
+        currentSound = soundUri
+        createChannel(soundUri)
+    }
+
+    private fun createChannel(soundUri: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            // Звук из ресурсов приложения (res/raw/notification_sound.mp3)
-            val soundUri = runCatching {
-                android.net.Uri.parse(
-                    "android.resource://${context.packageName}/${context.resources.getIdentifier(
-                        "notification_sound", "raw", context.packageName
-                    )}"
-                )
-            }.getOrElse {
-                android.media.RingtoneManager.getDefaultUri(
-                    android.media.RingtoneManager.TYPE_NOTIFICATION
-                )
+            
+            val sound = when (soundUri) {
+                "silent" -> null
+                "default" -> RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+                else -> runCatching { Uri.parse(soundUri) }.getOrNull()
+                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             }
-            val audioAttr = android.media.AudioAttributes.Builder()
-                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
-                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+
+            val audioAttr = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build()
+
             val channel = NotificationChannel(
                 CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description      = "Напоминания о сменах"
+                description = "Напоминания о сменах"
                 enableVibration(true)
-                vibrationPattern = longArrayOf(0, 200, 100, 200)
+                vibrationPattern = longArrayOf(0, 300, 150, 300, 150, 400)
                 enableLights(true)
-                setSound(soundUri, audioAttr)
+                lightColor = 0xFF4F6EF7.toInt()
+                if (sound != null) setSound(sound, audioAttr) else setSound(null, null)
             }
-            // Удаляем старый канал и создаём новый (иначе звук не обновится)
+
             nm.deleteNotificationChannel(CHANNEL_ID)
             nm.createNotificationChannel(channel)
         }
     }
 
-    // ── Разрешение на точные будильники (Android 12+) ─────────
     fun canScheduleExact(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
         val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -97,8 +99,7 @@ class TabelNotificationManager @Inject constructor(
         }
     }
 
-    // ── Вибрация ──────────────────────────────────────────────
-    fun vibrate(ms: Long = 40) {
+    fun vibrate(ms: Long = 50) {
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager)
@@ -115,13 +116,12 @@ class TabelNotificationManager @Inject constructor(
         }
     }
 
-    // ── Предпрослушивание звука ───────────────────────────────
     fun previewSound(soundUri: String) {
         stopPreview()
         if (soundUri == "silent") return
         runCatching {
             val uri = if (soundUri == "default")
-                android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             else Uri.parse(soundUri)
 
             mediaPlayer = MediaPlayer().apply {
@@ -144,7 +144,6 @@ class TabelNotificationManager @Inject constructor(
         mediaPlayer = null
     }
 
-    // ── Планирование уведомлений ──────────────────────────────
     fun scheduleNotifications(
         shifts: List<ShiftEntry>,
         settings: AppSettings,
@@ -154,7 +153,6 @@ class TabelNotificationManager @Inject constructor(
         val now = LocalDateTime.now()
         val today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
 
-        // Отменяем все предыдущие алармы нашего диапазона
         for (i in ALARM_ID_START..ALARM_ID_END) {
             PendingIntent.getBroadcast(
                 context, i,
@@ -165,65 +163,65 @@ class TabelNotificationManager @Inject constructor(
 
         if (settings.notifHoursBefore <= 0) return
 
+        // Обновляем канал с выбранным звуком
+        updateChannelSound(settings.notifSound)
+
         var id = ALARM_ID_START
         shifts
             .filter { it.date >= today }
             .sortedBy { it.date }
-            .take(60)   // берём больше смен — только одно уведомление на смену
+            .take(60)
             .forEach { entry ->
-                // Уведомления только для рабочих смен с реальным временем
                 if (!entry.type.hasTime) return@forEach
-                // Дополнительная защита: пропускаем нерабочие дни явно
                 when (entry.type) {
                     ShiftType.OFF, ShiftType.SICK, ShiftType.VACATION -> return@forEach
                     else -> { /* продолжаем */ }
                 }
 
-                // Время начала смены: кастомное → из настроек → дефолт
                 val st = shiftTimesMap[entry.type]
                 val startTime = entry.customStartTime
                     ?: st?.startTime
                     ?: when (entry.type) {
                         ShiftType.DAY     -> "08:00"
                         ShiftType.NIGHT   -> "20:00"
-                        ShiftType.SLEEP   -> st?.startTime  // отсыпной — только из настроек времени
+                        ShiftType.SLEEP   -> st?.startTime
                         ShiftType.HOLIDAY -> "08:00"
                         else              -> return@forEach
                     }
 
-                if (startTime == null) return@forEach   // нет времени — не уведомляем
+                if (startTime == null) return@forEach
                 val parts = startTime.split(":").map { it.toIntOrNull() ?: 0 }
                 val hh = parts.getOrElse(0) { 8 }
                 val mm = parts.getOrElse(1) { 0 }
                 val shiftDate  = LocalDate.parse(entry.date)
                 val shiftStart = shiftDate.atTime(hh, mm)
 
-                // Уведомление за N часов до начала смены
                 val t = shiftStart.minusHours(settings.notifHoursBefore.toLong())
                 if (t.isAfter(now) && id <= ALARM_ID_END) {
                     val h    = settings.notifHoursBefore
                     val word = when {
-                        h == 1                                     -> "час"
-                        h % 10 in 2..4 && h % 100 !in 12..14      -> "часа"
+                        h == 1                                      -> "час"
+                        h % 10 in 2..4 && h % 100 !in 12..14     -> "часа"
                         else                                        -> "часов"
                     }
                     val timeLabel = if (h == 0) "сейчас" else "через $h $word"
-                    scheduleAlarm(am, id++, t,
-                        "${entry.type.icon} ${entry.type.label} $timeLabel",
-                        "${entry.type.label} · начало в $startTime",
-                        settings.notifSound)
+                    
+                    val titleText = "${entry.type.icon} ${entry.type.label}"
+                    val bodyText = when {
+                        h == 0 -> "Начинается прямо сейчас!"
+                        h == 1 -> "Через 1 час"
+                        else -> "Через $h $word — начало в $startTime"
+                    }
+                    
+                    scheduleAlarm(am, id++, t, titleText, bodyText, settings.notifSound)
                 }
             }
     }
 
-    // ── Напоминание заполнить график (25-го числа) ────────────
-    // Вызывается из BootReceiver и TabelApplication при каждом старте.
-    // Если следующий месяц пустой — ставим аларм на 25-е текущего в 19:00.
     fun scheduleFillingReminder(nextMonthIsEmpty: Boolean) {
         val am  = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val now = LocalDate.now()
 
-        // Отменяем старый аларм напоминания (ID 1999 — вне основного диапазона)
         PendingIntent.getBroadcast(
             context, 1999,
             Intent(context, NotificationReceiver::class.java),
@@ -232,7 +230,6 @@ class TabelNotificationManager @Inject constructor(
 
         if (!nextMonthIsEmpty) return
 
-        // Ставим на 25-е текущего месяца в 19:00; если уже прошло — на 25-е следующего
         val target25 = now.withDayOfMonth(25)
         val targetDate = if (now.dayOfMonth <= 25) target25 else target25.plusMonths(1)
         val triggerTime = targetDate.atTime(19, 0)
@@ -245,9 +242,9 @@ class TabelNotificationManager @Inject constructor(
 
         val intent = Intent(context, NotificationReceiver::class.java).apply {
             putExtra("id",    1999)
-            putExtra("title", "📅 Не забудь заполнить график")
-            putExtra("body",  "График на $monthName ещё пустой")
-            putExtra("sound", "default")
+            putExtra("title", "📅 Заполни график на $monthName")
+            putExtra("body",  "Не забудь внести смены в календарь")
+            putExtra("sound", currentSound)
         }
         val pi = PendingIntent.getBroadcast(
             context, 1999, intent,
@@ -282,7 +279,6 @@ class TabelNotificationManager @Inject constructor(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && am.canScheduleExactAlarms()) {
                 am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, ms, pi)
             } else {
-                // Неточный, но всё равно лучше чем ничего
                 am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, ms, pi)
             }
         }.onFailure {
@@ -290,9 +286,7 @@ class TabelNotificationManager @Inject constructor(
         }
     }
 
-    // ── Показ уведомления (вызывается из BroadcastReceiver) ───
     fun showNotification(id: Int, title: String, body: String, soundUri: String) {
-        // Проверяем разрешение на Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val granted = context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -308,25 +302,29 @@ class TabelNotificationManager @Inject constructor(
         )
 
         val sound = when (soundUri) {
-            "silent"  -> null
-            "default" -> android.media.RingtoneManager.getDefaultUri(
-                android.media.RingtoneManager.TYPE_NOTIFICATION)
-            else      -> runCatching { Uri.parse(soundUri) }.getOrNull()
-                         ?: android.media.RingtoneManager.getDefaultUri(
-                             android.media.RingtoneManager.TYPE_NOTIFICATION)
+            "silent" -> null
+            "default" -> RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            else -> runCatching { Uri.parse(soundUri) }.getOrNull()
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
         }
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_popup_reminder)
             .setContentTitle(title)
             .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(pi)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setVibrate(longArrayOf(0, 200, 100, 200))
-            .setDefaults(NotificationCompat.DEFAULT_LIGHTS)
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setVibrate(longArrayOf(0, 300, 150, 300, 150, 400))
+            .setLights(0xFF4F6EF7.toInt(), 500, 500)
 
-        if (sound != null) builder.setSound(sound) else builder.setSilent(true)
+        if (sound != null) {
+            builder.setSound(sound)
+        } else {
+            builder.setSilent(true)
+        }
 
         (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
             .notify(id, builder.build())
