@@ -11,7 +11,7 @@
 [![Compose](https://img.shields.io/badge/Jetpack%20Compose-2024.02-4285F4?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![Room](https://img.shields.io/badge/Room-v8-FF6F00)](https://developer.android.com/training/data-storage/room)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-1.0-orange)]()
+[![Version](https://img.shields.io/badge/Version-1.1-orange)]()
 
 [**Возможности**](#-возможности) · [**Скриншоты**](#-скриншоты) · [**Установка**](#-установка) · [**Архитектура**](#-архитектура)
 
